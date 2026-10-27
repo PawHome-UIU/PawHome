@@ -1,0 +1,63 @@
+# ============================================================
+# Pawhome - repository .gitignore
+# ============================================================
+
+# ---------- SECRETS - never commit ----------
+.env
+.env.*
+!.env.example
+frontend/.env
+ai_service/.env
+backend/src/main/resources/application-local.yaml
+backend/src/main/resources/application-secret.yaml
+*.pem
+*.key
+*.p12
+*.keystore
+
+# ---------- RUNTIME DATA - never commit ----------
+# Files the running application writes. `reports/` matters most: a generated
+# Adoption Summary contains adopters' names, emails and fees, and this
+# repository gets submitted. `uploads/` was already being written and was
+# already not ignored -- pet photos and profile pictures of real people.
+backend/uploads/
+backend/reports/
+uploads/
+reports/
+
+# ---------- JAVA / MAVEN ----------
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+*.class
+hs_err_pid*
+replay_pid*
+
+# ---------- NODE / FRONTEND ----------
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-error.log*
+
+# ---------- PYTHON ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---------- MACOS / EDITORS ----------
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# ---------- WORKING FILES - not part of the submission ----------
+extras/_to_delete/
+extras/outputs/
+extras/Claude outputs/
+extras/.write_test_tmp
+**/.vscode/

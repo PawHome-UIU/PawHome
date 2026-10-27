@@ -1,0 +1,450 @@
+====================================================================================================
+ PAWHOME - BOARDING BILLING DESIGN
+ Per-night boarding slips + daycare subscription slips
+====================================================================================================
+
+ Course  : CSE 3522 - Database Management Systems Laboratory, UIU
+ Status  : BUILT. V13 (the two tables), V14 (seed prices), V15 (attendance
+           and itemised charges), com.pawhome.backend.daycare,
+           com.pawhome.backend.billing, and the React pages.
+ Drafted : 2026-09-08
+ Built   : 2026-09-17
+
+ SCOPE DECISION, MADE DELIBERATELY: there is NO payment processing here.
+ No gateway, no card storage, no payments table, no PAID/UNPAID state machine.
+ The system RECORDS WHAT IS OWED on a slip and stops. Money changing hands
+ happens outside the software.
+
+ Two new tables. 27 -> 29.
+
+
+====================================================================================================
+ THE TWO SYSTEMS
+====================================================================================================
+
+ 1. PER-NIGHT BOARDING  (already mostly built)
+    The owner books a pet in for N nights. The shelter's nightly rate is
+    copied onto the booking. When the pet is collected, a slip is issued for
+    the stay.
+
+ 2. DAYCARE SUBSCRIPTION  (entirely new)
+    The owner leaves the pet for one time-slot every day, ongoing. Three
+    fixed slots: 09:00-12:00, 12:00-15:00, 15:00-18:00. Billed monthly, one
+    slip per subscription per month. Each shelter has a per-slot capacity.
+
+
+====================================================================================================
+ WHAT IS ALREADY BUILT AND NEEDS NOTHING
+====================================================================================================
+
+ "The admin manages the price per day and can change it."
+
+ THIS ALREADY WORKS. BoardingService.request() copies the shelter's rate onto
+ the booking at request time:
+
+     .dailyRate(rate)
+     .estimatedCost(rate.multiply(BigDecimal.valueOf(nights)))
+
+ So shelters.boarding_rate_daily is the CURRENT price, editable by an admin on
+ the existing shelter form, and boarding_requests.daily_rate is the price THIS
+ booking was made at. Changing the shelter's rate never re-prices a booking
+ somebody already made. That is exactly the required behaviour and it needs no
+ new code.
+
+ The daycare design below copies the same pattern for monthly_price.
+
+
+====================================================================================================
+ TABLE 1 - daycare_subscriptions
+====================================================================================================
+
+CREATE TABLE daycare_subscriptions (
+    id            BIGINT NOT NULL AUTO_INCREMENT,
+    pet_id        BIGINT NOT NULL,
+    owner_id      BIGINT NOT NULL,
+    shelter_id    BIGINT NOT NULL,
+
+    -- 09:00-12:00, 12:00-15:00, 15:00-18:00.
+    -- FIXED BANDS, NOT ADMIN-EDITABLE. Editable slot times would mean a third
+    -- table (shelter_slots) and the brief does not ask for it. If that
+    -- changes, the enum becomes an FK and this comment is the warning.
+    slot          ENUM('MORNING','MIDDAY','AFTERNOON') NOT NULL,
+
+    -- COPIED AT SIGNUP, exactly as boarding_requests.daily_rate is copied.
+    -- An admin raising the shelter's price must not silently re-bill somebody
+    -- who subscribed last year at the old rate.
+    monthly_price DECIMAL(10,2) NOT NULL,
+
+    start_date    DATE NOT NULL,
+    end_date      DATE NULL,          -- NULL = ongoing, no end agreed
+    status        ENUM('ACTIVE','CANCELLED','EXPIRED') NOT NULL DEFAULT 'ACTIVE',
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    -- The capacity check reads exactly this: shelter + slot + still active.
+    KEY idx_sub_capacity (shelter_id, slot, status),
+    KEY idx_sub_owner (owner_id),
+    KEY idx_sub_pet (pet_id),
+
+    CONSTRAINT fk_sub_pet     FOREIGN KEY (pet_id)
+        REFERENCES pets (id)     ON DELETE RESTRICT,
+    CONSTRAINT fk_sub_owner   FOREIGN KEY (owner_id)
+        REFERENCES users (id)    ON DELETE RESTRICT,
+    CONSTRAINT fk_sub_shelter FOREIGN KEY (shelter_id)
+        REFERENCES shelters (id) ON DELETE RESTRICT,
+
+    CONSTRAINT ck_sub_price CHECK (monthly_price >= 0),
+    CONSTRAINT ck_sub_dates CHECK (end_date IS NULL OR end_date >= start_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+====================================================================================================
+ TABLE 2 - billing_slips   (serves BOTH systems)
+====================================================================================================
+
+ ONE TABLE FOR BOTH, and the reason is that a slip is a slip: an owner, a
+ shelter, a period, a quantity, a rate, a total. Two near-identical tables
+ would mean every "show me my bills" query is a UNION.
+
+CREATE TABLE billing_slips (
+    id                  BIGINT NOT NULL AUTO_INCREMENT,
+    slip_no             VARCHAR(30) NOT NULL,        -- 'PW-2026-09-0042'
+    owner_id            BIGINT NOT NULL,
+    shelter_id          BIGINT NOT NULL,
+
+    -- EXACTLY ONE SOURCE. Two REAL foreign keys, not an
+    -- entity_type/entity_id pair -- the database can enforce both of these,
+    -- and ck_slip_source below makes them mutually exclusive. (audit_log's
+    -- polymorphic entity_type/entity_id is the anti-pattern being avoided
+    -- here: it looks like an FK and enforces nothing.)
+    boarding_request_id BIGINT NULL,
+    subscription_id     BIGINT NULL,
+
+    period_from  DATE NOT NULL,
+    period_to    DATE NOT NULL,
+    units        SMALLINT NOT NULL,       -- nights boarded, or months subscribed
+    unit_rate    DECIMAL(10,2) NOT NULL,  -- per night, or per month
+    total        DECIMAL(10,2) NOT NULL,
+
+    issued_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    issued_by    BIGINT NULL,             -- staff; NULL = issued by the monthly job
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_slip_no (slip_no),
+
+    -- ONE SLIP PER COMPLETED STAY. This is what makes issuing idempotent: a
+    -- double-clicked "Complete" cannot bill the customer twice.
+    UNIQUE KEY uq_slip_boarding (boarding_request_id),
+    -- ONE SLIP PER SUBSCRIPTION PER MONTH. Makes the monthly job safe to
+    -- re-run -- the second run collides instead of double-billing.
+    UNIQUE KEY uq_slip_period (subscription_id, period_from),
+
+    KEY idx_slip_owner (owner_id, issued_at),
+    KEY idx_slip_shelter (shelter_id, issued_at),
+
+    CONSTRAINT fk_slip_owner    FOREIGN KEY (owner_id)
+        REFERENCES users (id)              ON DELETE RESTRICT,
+    CONSTRAINT fk_slip_shelter  FOREIGN KEY (shelter_id)
+        REFERENCES shelters (id)           ON DELETE RESTRICT,
+    CONSTRAINT fk_slip_boarding FOREIGN KEY (boarding_request_id)
+        REFERENCES boarding_requests (id)  ON DELETE RESTRICT,
+    CONSTRAINT fk_slip_sub      FOREIGN KEY (subscription_id)
+        REFERENCES daycare_subscriptions (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_slip_issuer   FOREIGN KEY (issued_by)
+        REFERENCES users (id)              ON DELETE SET NULL,
+
+    CONSTRAINT ck_slip_source CHECK (
+        (boarding_request_id IS NOT NULL AND subscription_id IS     NULL) OR
+        (boarding_request_id IS     NULL AND subscription_id IS NOT NULL)),
+    CONSTRAINT ck_slip_period CHECK (period_to >= period_from),
+    CONSTRAINT ck_slip_units  CHECK (units > 0),
+    CONSTRAINT ck_slip_total  CHECK (total >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+ WHY `total` IS STORED AND NOT COMPUTED
+
+ A slip is a DOCUMENT, not a view. It must still say what it said on the day
+ it was issued, even after the shelter changes its rate. This is the same
+ reason adoption_applications copies the applicant's address instead of
+ joining to users: what the shelter read when they decided is the record, not
+ what the person's address happens to be today.
+
+ There is deliberately no CHECK that total = units * unit_rate. A prorated
+ first month, or a goodwill discount, is a legitimate slip that would fail it.
+
+
+====================================================================================================
+ TWO COLUMNS ON shelters - NOT TABLES
+====================================================================================================
+
+ALTER TABLE shelters
+    ADD COLUMN daycare_monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00
+        COMMENT 'Current price for one daily slot, per month. Copied onto new subscriptions.',
+    ADD COLUMN daycare_slot_capacity INT NOT NULL DEFAULT 20
+        COMMENT 'How many pets may hold the same slot at once.';
+
+ shelters.capacity ALREADY EXISTS and is NOT reused. It means kennel places
+ for resident animals -- the denominator of the "28 / 50" bar on the shelter
+ page. A daycare slot is a different number about a different thing, and
+ conflating them would make one of the two figures wrong on screen.
+
+ ALL THREE SLOTS COST THE SAME under this design. Per-slot pricing (morning
+ dearer than midday) would need a third table, shelter_slot_prices(shelter_id,
+ slot, price). Not worth it unless the difference is real.
+
+
+====================================================================================================
+ FLOW 1 - PER-NIGHT BOARDING
+====================================================================================================
+
+ Unchanged from what is already built, up to the very end:
+
+   request()    owner books N nights. daily_rate + estimated_cost copied.
+   accept()     staff assign a suite. Dates held.
+   checkIn()    status ACTIVE.
+   complete()   <-- THE ONLY CHANGE. In the SAME TRANSACTION that sets
+                    COMPLETED, insert one billing_slips row:
+
+                      boarding_request_id = this stay
+                      period_from/to      = start_date / end_date
+                      units               = nights
+                      unit_rate           = boarding_requests.daily_rate
+                      total               = boarding_requests.estimated_cost
+                      issued_by           = the staff member completing it
+
+ uq_slip_boarding makes this safe against a double click: the second attempt
+ collides on the unique key instead of issuing a second bill.
+
+ KNOWN LIMITATION, DECIDE BEFORE BUILDING: the slip bills the BOOKED dates.
+ Nothing currently records when the pet was actually collected -- checkIn()
+ and complete() set the status but stamp no date. A pet collected two days
+ early is still billed five nights. Fixing it means a picked_up_on DATE column
+ on boarding_requests, set by complete(), and the slip billing actual nights.
+ That is one column, not a table.
+
+
+====================================================================================================
+ FLOW 2 - DAYCARE SUBSCRIPTION
+====================================================================================================
+
+ SIGNUP. Owner picks shelter + own pet + slot. Before inserting, inside the
+ transaction:
+
+     SELECT COUNT(*) FROM daycare_subscriptions
+      WHERE shelter_id = ? AND slot = ? AND status = 'ACTIVE'
+      FOR UPDATE;
+
+ If that equals shelters.daycare_slot_capacity, refuse:
+ "Morning is full at Harbor House."
+
+ THE LOCK IS NOT OPTIONAL. This is a cross-row rule, so a CHECK constraint
+ cannot express it -- MySQL CHECKs see one row. Two people subscribing at the
+ same instant would both read 19 and both insert, putting the shelter at 21.
+ It is the same FOR UPDATE pattern BoardingService.accept() already uses to
+ stop a suite being double-booked, so the codebase has the shape already.
+
+ MONTHLY BILLING. A @Scheduled job on the 1st inserts one slip per ACTIVE
+ subscription:
+
+     subscription_id = the subscription
+     period_from/to  = first and last day of the month
+     units           = 1
+     unit_rate       = daycare_subscriptions.monthly_price
+     total           = same
+     issued_by       = NULL  (the system, not a person)
+
+ uq_slip_period (subscription_id, period_from) makes the job safe to re-run
+ by hand, which somebody always ends up doing.
+
+ CANCELLATION. status = 'CANCELLED', end_date = today. Slips already issued
+ are untouched -- they are a record of what was owed, not a live balance.
+
+
+====================================================================================================
+ DECISIONS TAKEN, SO THEY ARE NOT RE-ARGUED
+====================================================================================================
+
+ NO PAYMENTS TABLE. The brief is "generate a slip", not "take money". A
+ payments table with PENDING/PAID states, refunds and a gateway was designed
+ and then deliberately dropped -- it is a whole subsystem answering a question
+ nobody asked, and the schema has already been criticised for carrying
+ application machinery rather than domain data.
+
+ NO PAID/UNPAID FLAG ON THE SLIP EITHER. The moment that column exists,
+ somebody has to maintain it, and the system is a payment system again by
+ accident. If settlement tracking is genuinely wanted later, add it then.
+
+ ONE SLIP TABLE, NOT TWO. See above.
+
+ A PET MAY HOLD MORE THAN ONE SLOT. Morning AND afternoon is a reasonable
+ thing to want. The same slot twice is not, and that is enforced in the
+ SERVICE, not by a partial unique index emulated with a generated column. The
+ schema already uses that trick twice (pending_flag, cover_flag) and has been
+ told it is too clever; this is a cheap place to be plain.
+
+
+====================================================================================================
+ THE FOUR OPEN QUESTIONS - ANSWERED, AND BUILT THAT WAY
+====================================================================================================
+
+ 1. BOOKED OR ACTUAL NIGHTS?   -> ACTUAL.
+    boarding_requests.picked_up_on was added (one column, nullable, with
+    ck_boarding_picked_up allowing NULL or >= start_date and deliberately NO
+    upper bound). complete() stamps it and the slip is built from it.
+
+    Verified against the real schema: a stay booked 09-01 -> 09-06 at 800 a
+    night (quoted 4000) and collected on 09-04 bills 3 nights = 2400.00. A
+    stay collected on 09-08 bills 7 nights, not 5 -- a pet picked up late is
+    a real thing, and charging for it is the same honesty as not charging for
+    days it was not here. Same-day collection floors at ONE night, applied in
+    the service rather than left to surface as a ck_slip_units violation.
+
+ 2. PRORATE THE FIRST MONTH?   -> NO. A full month whichever day they join.
+    Simpler to explain at the counter, and `total` carries no CHECK tying it
+    to units * unit_rate, so proration can be introduced later without a
+    schema change.
+
+ 3. DOES DAYCARE NEED THE QUIZ GATE?   -> YES, and harder than boarding's.
+    daycare_subscriptions.quiz_attempt_id is NOT NULL -- unlike the boarding
+    column, which is nullable only because V6 found stays that predated the
+    quiz. Nothing predates this table. It gets the same composite-FK
+    treatment: a constant quiz_attempt_type column pinned by ck_sub_quiz_type
+    and fk_sub_attempt referencing quiz_attempts (id, quiz_type), so a
+    PERSONALITY attempt -- which has no pass mark and cannot be failed --
+    cannot be used as the gate. The service additionally requires the attempt
+    to be the caller's own AND to have PASSED.
+
+    Verified: inserting a subscription gated by the PERSONALITY attempt is
+    refused by fk_sub_attempt; the same row with a BOARDING attempt succeeds.
+
+ 4. WHO CAN ISSUE A SLIP BY HAND?   -> NOBODY, and that turned out to be the
+    right answer rather than a narrower one. There is no hand-issue endpoint
+    on either controller. A boarding slip is written by checking the pet out
+    and a daycare slip by the monthly job; a hand-issued slip would be a bill
+    with no stay and no month behind it, which ck_slip_source would refuse
+    anyway -- every slip must point at a boarding request or a subscription.
+
+
+====================================================================================================
+ WHAT CHANGED BETWEEN THE DESIGN AND THE BUILD
+====================================================================================================
+
+ SLIP NUMBERS ARE DERIVED, NOT COUNTED. The design's 'PW-2026-09-0042' is a
+ running counter, and a running counter is the one thing that cannot be
+ produced safely: it needs either a lock on a counter table (a third table,
+ for a cosmetic string) or MAX(seq)+1, which two transactions read
+ identically and both use. It cannot come from the row's own AUTO_INCREMENT
+ id either -- MySQL forbids a generated column from referring to one. So the
+ number is derived from the thing being billed, which is already unique:
+
+     PW-B-2026-09-000123    boarding request 123, stay ending Sept 2026
+     PW-D-2026-09-000045    subscription 45, billed for September 2026
+
+ Unique by construction, no counter, no lock, no second statement, no race --
+ and a slip re-issued after a rolled-back transaction gets the SAME number
+ rather than burning one, which is the thing accountants actually complain
+ about.
+
+ ONE EXTRA notifications.type: SLIP_ISSUED. For a boarding slip this is a
+ courtesy -- the owner is standing at the counter. For a daycare slip it is
+ the only thing that tells them, because nobody is standing anywhere when a
+ @Scheduled job runs at 03:00 on the 1st.
+
+ ck_sub_ended WAS NOT IN THE DESIGN. A subscription that is not ACTIVE must
+ carry an end_date. The mirror half is deliberately absent: an ACTIVE
+ subscription MAY have one, because agreeing up front to finish in June is a
+ normal thing to do. This also forced cancel() to write max(today,
+ start_date) rather than today -- a subscription starting next Monday and
+ cancelled this afternoon would otherwise be a row that ended before it began,
+ and ck_sub_dates refuses it.
+
+ THE STAFF CONTROLLERS WERE WRONG AT FIRST, AND THE URL RULE CAUGHT IT. Both
+ were written @PreAuthorize("hasAnyRole('STAFF','ADMIN')"), on the assumption
+ an admin should see a shelter's bills. SecurityConfig gates the whole prefix:
+
+     .requestMatchers("/api/v1/staff/**").hasRole("STAFF")
+
+ and that runs in the filter chain, long before any @PreAuthorize. So the
+ admin half was never reachable -- dead code plus a comment claiming a route
+ that did not exist. Not a hole: the stricter of the two rules won, which is
+ the right way round for a mistake like this to fail.
+
+ The fix follows SecurityConfig's own stated convention -- "Admin access to
+ the same data goes through /api/v1/admin/**, where the shelter is named
+ explicitly" -- so the staff controllers are STAFF-only with no shelterId
+ parameter, and AdminSlipController / AdminDaycareController serve the
+ network-wide view. RbacRulesTest already asserted the rule being broken:
+ "ADMIN: admin area yes, staff area NO".
+
+ CAPACITY IS PROVEN, NOT ASSERTED. Two concurrent MySQL sessions: the first
+ took the FOR UPDATE capacity read and held it; the second's INSERT into the
+ same (shelter, band, ACTIVE) range BLOCKED for 4.006 seconds until the first
+ transaction ended. That is the gap lock doing its job -- a plain SELECT would
+ have let both rows through and put the shelter over capacity.
+
+
+====================================================================================================
+ TO BUILD IT
+====================================================================================================
+
+   V13__daycare_and_slips.sql   the two tables + two shelters columns
+   com.pawhome.backend.daycare  Subscription entity, repo, service, controllers
+   com.pawhome.backend.billing  Slip entity, repo, service, controllers
+                                (or fold slips into daycare -- one module is
+                                 defensible, since neither is large)
+   BoardingService.complete()   issue the slip in the existing transaction
+   Frontend                     adopter: subscribe, my slips, download slip
+                                staff:   slot occupancy, issue slip by hand
+                                admin:   daycare price + capacity on the
+                                         shelter form (two fields, existing page)
+
+ NEVER EDIT A MIGRATION THAT HAS ALREADY RUN. This was V13; the next one is
+ V14.
+
+ WHAT WAS ACTUALLY BUILT
+
+   V13__daycare_and_billing_slips.sql
+       the two tables, two shelters columns, boarding_requests.picked_up_on,
+       and SLIP_ISSUED on the notifications.type ENUM
+
+   com.pawhome.backend.daycare
+       DaycareSlot, SubscriptionStatus, DaycareSubscription,
+       DaycareSubscriptionRepository (two FOR UPDATE locks, two @Modifying
+       writes), DaycareDtos, DaycareService,
+       OwnerDaycareController, StaffDaycareController, AdminDaycareController
+
+   com.pawhome.backend.billing
+       BillingSlip, BillingSlipRepository, BillingDtos, BillingService,
+       MonthlyBillingJob,
+       OwnerSlipController, StaffSlipController, AdminSlipController
+
+   application.yaml
+       app.billing.monthly-cron, so a demo can run the monthly job every
+       minute without editing the @Scheduled annotation
+
+   V14__seed_daycare_prices.sql
+       every seeded shelter gets a daycare price (its own nightly rate x 10),
+       because V13's only honest default was 0.00 and offers() filters those
+       out -- so the feature shipped invisible
+
+   V15__attendance_and_slip_items.sql
+       daycare_attendance  one row per pet per day, with the room and the
+                           times. The fact behind "who is in the building",
+                           which nothing recorded and which is why the staff
+                           "Pets in Care" tile counted the wrong set.
+       billing_slip_items  itemised extras on a bill: medication, extra food,
+                           grooming. line_total is a GENERATED column, so the
+                           arithmetic cannot drift from the numbers beside it.
+
+   Early pickup needed no new flag: a stay completed before its end_date IS an
+   early pickup, and V13 already billed start_date -> picked_up_on. What was
+   missing was somewhere to put the medication.
+
+   BoardingService.complete()
+       stamps picked_up_on and issues the slip in the existing transaction
+
+   Frontend
+       adopter: /app/daycare, /app/slips, /app/slips/:id (printable)
+       staff:   /staff/daycare (occupancy), /staff/slips
+       admin:   daycare price + per-band capacity on the shelter form

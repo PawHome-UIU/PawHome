@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-pw-tint text-pw-body font-sans antialiased;
+}
+
+/* Headings are near-black, not purple. Purple is reserved for action. */
+h1,
+h2,
+h3,
+h4 {
+  @apply text-pw-ink;
+  text-wrap: balance;
+}
+
+/* Every interactive element gets a visible keyboard focus ring. Tailwind's
+   default outline-none on form elements removes it, so it is restored here
+   once rather than remembered on every component. */
+:focus-visible {
+  outline: 2px solid theme("colors.pw.button");
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

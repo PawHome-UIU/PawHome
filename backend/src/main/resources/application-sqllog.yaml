@@ -1,0 +1,118 @@
+# =============================================================================
+# application-sqllog.yaml -- make every statement the application sends VISIBLE.
+#
+# Turn it on for a demo only:
+#
+#     ./mvnw spring-boot:run -Dspring-boot.run.profiles=sqllog
+#
+# or, on a built jar:
+#
+#     java -jar target/backend.jar --spring.profiles.active=sqllog
+#
+#
+# WHY THIS EXISTS, AND WHY A @Query CANNOT REPLACE IT
+#
+# Every SELECT in this project is now written out by hand -- 77 in the services
+# and 28 in the repositories. INSERT and UPDATE are different: they are not
+# written anywhere, because repository.save(entity) builds them from the
+# entity's own state and from which of its fields changed since it was loaded.
+# There is no string to point at. The only way to see them is to watch
+# Hibernate emit them.
+#
+# So this profile prints:
+#
+#     the statement          org.hibernate.SQL
+#     the bound values       org.hibernate.orm.jdbc.bind
+#     BEGIN / COMMIT         the two transaction loggers
+#
+# Which means an adoption approval shows up in the console as what it actually
+# is: one BEGIN, an INSERT into adoptions, an UPDATE on adoption_applications,
+# an UPDATE on pets, an INSERT into notifications, one COMMIT. That is a far
+# better answer to "show me your transactions" than any amount of source code.
+#
+#
+# THE STATEMENTS DO NOT APPEAR IN THE ORDER THE JAVA IS WRITTEN
+#
+# This surprises everyone once. Hibernate does not send a statement when you
+# call save(); it sends it when it has to. Two different rules:
+#
+#   INSERT of a NEW entity      immediate. The id column is AUTO_INCREMENT, so
+#                               Hibernate must run the INSERT to find out what
+#                               id the row got.
+#
+#   UPDATE of a LOADED entity   deferred. app and pet were loaded earlier in
+#                               this same transaction, so they are "managed":
+#                               save() only marks them dirty. The UPDATE is
+#                               written at the next FLUSH, which is either the
+#                               commit, or the moment a query is run against a
+#                               table that has pending changes.
+#
+# So in approve() the INSERT into adoptions appears first, then the two UPDATEs
+# appear together just before the SELECT on adoption_applications that looks
+# for the other open applications -- Hibernate flushes them because that query
+# would otherwise read stale rows.
+#
+# All of it is still inside ONE transaction. "Initiating transaction commit" is
+# the boundary; everything above it since "Creating new transaction with name
+# [...ApplicationService.approve]" belongs to that unit of work.
+#
+#
+# WHY IT IS NOT ON BY DEFAULT
+#
+# It is very loud -- every statement, every parameter, on every request -- and
+# bound parameters include email addresses and password HASHES. Fine on a
+# laptop in front of a marker; not something to leave switched on.
+# =============================================================================
+
+spring:
+  jpa:
+    properties:
+      hibernate:
+        # Indent and line-break the statement instead of printing it as one
+        # long line. Already true in application.yaml; repeated here so this
+        # profile works even if that changes.
+        format_sql: true
+        # ANSI colour in a terminal. Harmless when the output is piped.
+        highlight_sql: true
+
+    # DELIBERATELY LEFT FALSE. show-sql prints through Hibernate's own channel
+    # while the logger below prints through SLF4J -- switching both on prints
+    # every statement TWICE.
+    show-sql: false
+
+logging:
+  level:
+    # ---------------------------------------------------------------- Hibernate
+    #
+    # Covers ONLY what Hibernate executes: the entity loads, the INSERT/UPDATE
+    # that repository.save() generates, and the 28 repository @Query methods.
+    org.hibernate.SQL: DEBUG
+
+    # ---------------------------------------------------------------- JdbcTemplate
+    #
+    # AND THIS COVERS THE OTHER 77. Fifteen services hold a JdbcTemplate and
+    # every query they run goes STRAIGHT TO JDBC -- it never passes through
+    # Hibernate, so org.hibernate.SQL above cannot see it. Without these two
+    # lines the majority of the project's SQL is invisible even with logging on,
+    # which is a confusing way to discover that a logger is scoped to one
+    # library rather than to "the database".
+    org.springframework.jdbc.core.JdbcTemplate: DEBUG
+    # The values bound to those statements.
+    org.springframework.jdbc.core.StatementCreatorUtils: TRACE
+
+    # The values themselves, in order.
+    #
+    # NOTE THE LOGGER NAME. Hibernate 6 moved this; the name most tutorials
+    # still give -- org.hibernate.type.descriptor.sql.BasicBinder -- is a
+    # Hibernate 5 logger and prints absolutely nothing on this version, which
+    # looks like the setting failed rather than like the wrong name.
+    org.hibernate.orm.jdbc.bind: TRACE
+
+    # BEGIN and COMMIT, so a multi-statement transaction reads as one unit
+    # rather than as four unrelated statements that happen to be adjacent.
+    org.springframework.orm.jpa.JpaTransactionManager: DEBUG
+    org.springframework.transaction.interceptor: TRACE
+
+    # Keep this at INFO even here. DEBUG on the security package leaks tokens
+    # and auth internals, and no demo needs that.
+    org.springframework.security: INFO

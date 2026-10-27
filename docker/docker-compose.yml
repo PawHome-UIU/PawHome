@@ -1,0 +1,39 @@
+# Pawhome - local MySQL for dev.
+#
+# `name:` IS REQUIRED. Without it, Compose names the project after this folder
+# ("docker") -- and Cha-Ghor's compose file lives in a folder called "docker"
+# too. Two projects sharing a Compose project name will stop and replace each
+# other's containers.
+name: pawhome
+
+services:
+  pawhome-db:
+    # PIN THE MAJOR VERSION. CHECK constraints are only ENFORCED from MySQL
+    # 8.0.16 -- older servers parse them and silently ignore them, which is
+    # worse than not having them at all. The schema leans on CHECK heavily.
+    image: mysql:8.4
+    container_name: pawhome-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: pawhome
+      MYSQL_USER: pawhome
+      MYSQL_PASSWORD: pawhome_dev_pw
+      # MySQL requires a root password even when the app uses its own user.
+      MYSQL_ROOT_PASSWORD: pawhome_root_dev_pw
+    ports:
+      - "3307:3306"   # HOST:CONTAINER. 3306 = any system MySQL. See docs/PORTS.txt.
+    volumes:
+      # Volume name MUST differ from Cha Ghor's, or both projects mount the
+      # same data directory.
+      - pawhome_mysqldata:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d   # runs ONCE, on first boot only
+    healthcheck:
+      # $$ escapes the $ so Compose passes it through to the shell.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  pawhome_mysqldata:

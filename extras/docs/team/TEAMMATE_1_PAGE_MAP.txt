@@ -1,0 +1,307 @@
+================================================================================
+TEAMMATE 1  --  MY PAGES, ONE BY ONE
+Adopter journey + Login/Register + public pet browsing
+================================================================================
+
+Use this in the demo. For every page you get:
+  URL        what to type in the browser
+  FILE       the exact file to open if the teacher says "show me the code"
+  WHAT       what the page is for
+  ON SCREEN  what you can see and click
+  USES       which components it is built from
+  DATA       where the numbers come from
+
+I have 15 pages and 6 components.
+
+
+################################################################################
+1.  LOGIN AND REGISTER   (4 pages)
+################################################################################
+
+--------------------------------------------------------------------------------
+ROLE SELECT
+--------------------------------------------------------------------------------
+  URL       /join
+  FILE      src/pages/auth/RoleSelectPage.jsx
+  WHAT      The first step of signing up. You choose who you are before you
+            fill in any form.
+  ON SCREEN Three role cards (Adopter / Shelter Staff / Admin), and a
+            "Log in" link for people who already have an account.
+            Clicking a card sends you to /register carrying that choice.
+  USES      Logo (Teammate 3's), Button
+  HOOKS     useState (which card is selected), useNavigate (to move on)
+  WHY FIRST The register form is different for each role, so we ask the role
+            before showing the form.
+
+--------------------------------------------------------------------------------
+LOGIN
+--------------------------------------------------------------------------------
+  URL       /login
+  FILE      src/pages/auth/LoginPage.jsx
+  WHAT      Sign in.
+  ON SCREEN Email Address box, Password box, "Remember me" tick box,
+            Sign in button, "Forgot password?" link.
+            The "OR CONTINUE WITH" social buttons are design only, not wired.
+  USES      AuthLayout (Teammate 3's), Logo, Button, Input, Checkbox
+  TALKS TO  THE REAL BACKEND. It imports api from src/api/client.js and calls
+            POST /api/v1/auth/login. Errors are shown using apiError().
+  HOOKS     useState (form fields, error message), useNavigate (after login)
+  >>> THIS IS ONE OF ONLY TWO PAGES IN THE WHOLE PROJECT THAT ALREADY CALLS
+      THE BACKEND. Say this in the demo.
+
+--------------------------------------------------------------------------------
+REGISTER
+--------------------------------------------------------------------------------
+  URL       /register
+  FILE      src/pages/auth/RegisterPage.jsx
+  WHAT      Create an account.
+  ON SCREEN Full name, Email address, Password, Confirm password, terms tick
+            box, Create account button.
+  USES      AuthLayout, Logo, Button, Input, Checkbox
+  TALKS TO  THE REAL BACKEND. POST /api/v1/auth/register.
+  HOOKS     useState (form), useMemo (password strength check),
+            useLocation (reads the role picked on /join), useNavigate
+  NOTE      useLocation is how the role travels from /join to here without
+            putting it in the web address.
+
+--------------------------------------------------------------------------------
+FORGOT PASSWORD
+--------------------------------------------------------------------------------
+  URL       /forgot-password
+  FILE      src/pages/auth/ForgotPasswordPage.jsx
+  WHAT      Ask for a reset link.
+  ON SCREEN Email box, send button, "Back to sign in" link.
+  USES      AuthLayout, Logo, Button, Input
+  HOOKS     useState
+
+
+################################################################################
+2.  PUBLIC PET BROWSING   (2 pages -- the only public pages I own)
+################################################################################
+
+--------------------------------------------------------------------------------
+BROWSE PETS
+--------------------------------------------------------------------------------
+  URL       /pets
+  FILE      src/pages/public/BrowsePetsPage.jsx
+  WHAT      The pet catalogue anyone can see without logging in.
+  ON SCREEN Search box (name or breed), filter dropdowns (species, age, size),
+            a grid of pet cards, pagination at the bottom.
+            Clicking a card opens /pets/:id
+  USES      PublicLayout (Teammate 3's), PetCard, Dropdown, CtaBand
+  DATA      src/data/pets.js  ->  PETS and FILTERS
+  HOOKS     useState (search text, filters), useMemo (filters the list without
+            recalculating on every keystroke)
+  >>> "SHOW ME THE SEARCH" -- it is the useMemo block in this file.
+
+--------------------------------------------------------------------------------
+GUEST PET DETAIL
+--------------------------------------------------------------------------------
+  URL       /pets/:id      example: /pets/3
+  FILE      src/pages/public/GuestPetDetailPage.jsx
+  WHAT      One pet's profile for someone who is NOT signed in.
+  ON SCREEN Photo, name, breed, age, status badge, description,
+            "Browse all pets" button, breadcrumb at the top.
+            To actually apply you must sign in -- that is the gate.
+  USES      PublicLayout, Card, Button, StatusBadge
+  DATA      src/data/pets.js -> PETS
+  HOOKS     useParams (reads the ":id" out of the address), useNavigate
+  >>> "HOW DOES IT KNOW WHICH PET?" -- useParams. /pets/3 gives id = 3.
+
+
+################################################################################
+3.  ADOPTER PORTAL   (9 pages, all start with /app)
+################################################################################
+
+--------------------------------------------------------------------------------
+ADOPTER DASHBOARD
+--------------------------------------------------------------------------------
+  URL       /app
+  FILE      src/pages/adopter/AdopterDashboard.jsx
+  WHAT      Home screen after logging in.
+  ON SCREEN Four number tiles: Active Applications, Active Boardings,
+            Favorites Saved, Recommended Matches.
+            Recommended pets as cards. Recent application list.
+            Buttons: "Browse Pets", "View Recommendations", "View Details"
+  USES      AdopterLayout, MetricTile, MatchCard, Card, Button
+  DATA      src/data/adopter.js -> RECOMMENDED, MY_APPLICATIONS, FAVORITES
+  HOOKS     none (it only displays)
+
+--------------------------------------------------------------------------------
+BROWSE PETS (SIGNED IN)
+--------------------------------------------------------------------------------
+  URL       /app/pets
+  FILE      src/pages/adopter/ShelterPetsPage.jsx
+  WHAT      The same catalogue, but for a signed-in adopter, with match scores.
+  ON SCREEN Search box, filter dropdowns, "Best match" sort, grid of MatchCards.
+  USES      AdopterLayout, MatchCard, Dropdown
+  DATA      src/data/pets.js (PETS, FILTERS) + src/data/adopter.js (RECOMMENDED)
+  HOOKS     useState, useMemo
+  DIFFERENCE FROM /pets: this one shows a match percentage, because we know
+  who the user is.
+
+--------------------------------------------------------------------------------
+PET DETAIL
+--------------------------------------------------------------------------------
+  URL       /app/pets/:id
+  FILE      src/pages/adopter/PetDetailPage.jsx
+  WHAT      Full profile of one pet, for a signed-in adopter.
+  ON SCREEN Photos, details, status badge, health info, similar pets,
+            and the Apply button which goes to /app/pets/:id/apply
+  USES      AdopterLayout, Card, Button, StatusBadge, MatchCard
+  DATA      src/data/adopter.js -> PET_DETAIL, RECOMMENDED
+  HOOKS     useState, useNavigate
+
+--------------------------------------------------------------------------------
+ADOPTION APPLICATION
+--------------------------------------------------------------------------------
+  URL       /app/pets/:id/apply
+  FILE      src/pages/adopter/AdoptionApplicationPage.jsx
+  WHAT      The adoption form. THE MOST IMPORTANT PAGE IN MY PART.
+  ON SCREEN A form in steps.
+            Fields: Full Name, Email Address, Current City, Home type, and more.
+            Buttons: "Continue" (next step), "Take quiz" (opens the eligibility
+            quiz), and after submitting: "Track this application" and
+            "Keep browsing".
+  USES      AdopterLayout, Card, Button, Input, StatusBadge,
+            EligibilityQuizModal
+  DATA      src/data/adopter.js -> PET_DETAIL
+  HOOKS     useState (form + which step), useNavigate (after submitting)
+  >>> DEMO THIS PAGE. It is the end of the whole adopter journey.
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+  URL       /app/recommendations
+  FILE      src/pages/adopter/RecommendationsPage.jsx
+  WHAT      Pets suggested for this adopter, based on their quiz answers.
+  ON SCREEN A list of MatchCards with match scores, and the traits we matched on.
+            Opens the eligibility quiz if they have not taken it.
+  USES      AdopterLayout, MatchCard, EligibilityQuizModal, Card
+  DATA      src/data/adopter.js -> RECOMMENDED, MY_TRAITS
+  HOOKS     useState
+
+--------------------------------------------------------------------------------
+MY APPLICATIONS
+--------------------------------------------------------------------------------
+  URL       /app/applications
+  FILE      src/pages/adopter/MyApplicationsPage.jsx
+  WHAT      Everything I applied for and where each one stands.
+  ON SCREEN Tabs (All / Pending / Approved / Declined), a list of applications
+            with status, and a share button.
+  USES      AdopterLayout, Card, Button, Tabs
+  DATA      src/data/adopter.js -> MY_APPLICATIONS
+  HOOKS     useState (which tab)
+
+--------------------------------------------------------------------------------
+FAVORITES
+--------------------------------------------------------------------------------
+  URL       /app/favorites
+  FILE      src/pages/adopter/FavoritesPage.jsx
+  WHAT      Pets I saved to look at later.
+  ON SCREEN Saved pets, a sort dropdown, and if empty a "Browse Pets" button.
+  USES      AdopterLayout, Card, Button, Dropdown, StatusBadge
+  DATA      src/data/adopter.js -> FAVORITES
+  HOOKS     useState
+  >>> "SHOW ME AN EMPTY STATE" -- this page has one.
+
+--------------------------------------------------------------------------------
+MY BOARDINGS
+--------------------------------------------------------------------------------
+  URL       /app/boarding
+  FILE      src/pages/adopter/AdopterBoardingPage.jsx
+  WHAT      Boarding bookings I have requested (leaving a pet at a shelter).
+  ON SCREEN My pets, current bookings, "View All" and "Browse Pets" buttons,
+            and a request flow that opens the boarding quiz.
+            A success pop-up confirms the request.
+  USES      AdopterLayout, Card, Button, SuccessModal, BoardingQuizModal
+  DATA      src/data/adopter.js -> MY_PETS, MY_BOARDINGS
+  HOOKS     useState
+
+--------------------------------------------------------------------------------
+BOARDING DETAIL
+--------------------------------------------------------------------------------
+  URL       /app/boarding/:id
+  FILE      src/pages/adopter/BoardingDetailPage.jsx
+  WHAT      One booking in full: dates, kennel, cost, updates from the shelter.
+  ON SCREEN Booking info, timeline of updates, buttons "Message Shelter" and
+            "View Full History".
+  USES      AdopterLayout, Card, Button
+  DATA      src/data/adopter.js -> BOARDING_DETAIL
+  HOOKS     useNavigate
+
+
+################################################################################
+4.  MY COMPONENTS   (the reusable pieces I built)
+################################################################################
+
+  AdopterLayout          src/components/adopter/AdopterLayout.jsx
+      The frame around every /app page: sidebar, top bar, content area.
+      It is a thin wrapper around PortalShell (Teammate 2's file) with the
+      adopter menu items. Written once so all 9 adopter pages match.
+
+  EligibilityQuizModal   src/components/adopter/EligibilityQuizModal.jsx
+      Pop-up that asks questions to check if someone is ready to adopt.
+      Built from Modal + Button. Used by the application page and the
+      recommendations page.
+      WHY A POP-UP: it interrupts a task. Keeping the pet visible behind it
+      means the user does not lose their place.
+
+  BoardingQuizModal      src/components/adopter/BoardingQuizModal.jsx
+      Same idea, for requesting a boarding stay. Modal + Button.
+
+  MatchCard              src/components/adopter/MatchCard.jsx
+      One suggested pet with a match score. Button: "View Profile".
+      Built from Card + Button + StatusBadge.
+
+  MetricTile             src/components/adopter/MetricTile.jsx
+      One number box on the dashboard (label + big number). Built from Card.
+
+  PetCard                src/components/pets/PetCard.jsx
+      One pet in a grid: photo, name, breed, age, status.
+      USED BY BOTH the public browse page AND Teammate 3's landing page.
+      Built from Card + Button + StatusBadge.
+
+  StatusBadge            src/components/pets/StatusBadge.jsx
+      The small coloured label: Available / Pending / Adopted.
+      The smallest component in the project and one of the most used.
+
+
+################################################################################
+5.  IF THE TEACHER SAYS "SHOW ME..."   --  quick lookup
+################################################################################
+
+  "the login form"              /login          pages/auth/LoginPage.jsx
+  "code that calls the API"     same file, the api.post line + api/client.js
+  "the register form"           /register       pages/auth/RegisterPage.jsx
+  "how you pick a role"         /join           pages/auth/RoleSelectPage.jsx
+  "the pet list"                /pets           pages/public/BrowsePetsPage.jsx
+  "one pet's page"              /pets/3         pages/public/GuestPetDetailPage.jsx
+  "how it knows which pet"      useParams in that file
+  "search or filtering"         BrowsePetsPage.jsx, the useMemo block
+  "the adopter dashboard"       /app            pages/adopter/AdopterDashboard.jsx
+  "the adoption form"           /app/pets/1/apply
+                                pages/adopter/AdoptionApplicationPage.jsx
+  "a pop-up / modal"            components/adopter/EligibilityQuizModal.jsx
+  "an empty state"              /app/favorites  pages/adopter/FavoritesPage.jsx
+  "tabs"                        /app/applications, uses components/ui/Tabs.jsx
+  "the pet card component"      components/pets/PetCard.jsx
+  "the status colour label"     components/pets/StatusBadge.jsx
+  "the sidebar"                 components/adopter/AdopterLayout.jsx
+                                (which uses components/portal/PortalShell.jsx)
+  "where the fake data is"      src/data/adopter.js  and  src/data/pets.js
+  "where all the routes are"    src/App.jsx
+
+
+################################################################################
+6.  THINGS TO KNOW BEFORE THE DEMO
+################################################################################
+
+* I DO NOT own components/ui/ -- that is Teammate 2. I only use it.
+* I DO NOT own AuthLayout or Logo -- those are Teammate 3's. I import them.
+* My pages read from src/data/*.js, not the backend, EXCEPT login and register.
+* The fake data is shaped like the database views, so connecting the real API
+  is one line per page:
+        useEffect(() => { api.get("/pets").then(r => setPets(r.data)); }, []);
+* No route is guarded yet. Anyone can type /app. The real protection is
+  @PreAuthorize on the backend, which is the next phase.

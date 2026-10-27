@@ -1,0 +1,303 @@
+================================================================================
+TEAMMATE 3  --  MY PAGES, ONE BY ONE
+Admin console + public website + site chrome
+================================================================================
+
+Use this in the demo. For every page you get:
+  URL / FILE / WHAT / ON SCREEN / USES / DATA
+
+I have 11 pages, 7 admin components, and the site chrome everyone depends on.
+
+
+################################################################################
+1.  PUBLIC WEBSITE   (5 pages -- what a stranger sees first)
+################################################################################
+
+--------------------------------------------------------------------------------
+LANDING PAGE
+--------------------------------------------------------------------------------
+  URL       /
+  FILE      src/pages/public/LandingPage.jsx
+  WHAT      The home page. The first thing anyone sees.
+  ON SCREEN Hero section, how-it-works steps, featured pets, closing call
+            to action.
+            Buttons: "Browse Pets" -> /pets
+                     "Take the Match Quiz" / "Start Your Quiz"
+                     "Learn more" -> /features
+  USES      PublicLayout, Button, Card, PetCard (Teammate 1's), CtaBand
+  DATA      src/data/pets.js -> PETS (for the featured pets strip)
+  >>> DEMO THIS FIRST. It sets the tone for the whole project.
+
+--------------------------------------------------------------------------------
+ABOUT
+--------------------------------------------------------------------------------
+  URL       /about
+  FILE      src/pages/public/AboutPage.jsx
+  WHAT      Who we are, the mission, the team.
+  ON SCREEN Headed sections, feature rows, a closing call-to-action band.
+  USES      PublicLayout, SectionHeading, FeatureRow, CtaBand, Card
+
+--------------------------------------------------------------------------------
+FEATURES
+--------------------------------------------------------------------------------
+  URL       /features
+  FILE      src/pages/public/FeaturesPage.jsx
+  WHAT      What the platform can do.
+  ON SCREEN Feature rows with icons, "Take the Quiz" button.
+  USES      PublicLayout, SectionHeading, FeatureRow, CtaBand, Card, Button
+
+--------------------------------------------------------------------------------
+SERVICES
+--------------------------------------------------------------------------------
+  URL       /services
+  FILE      src/pages/public/ServicesPage.jsx
+  WHAT      Adoption and boarding services explained, plus an FAQ.
+  ON SCREEN Service sections, an expand/collapse FAQ, "Request Boarding" button.
+  USES      PublicLayout, SectionHeading, FeatureRow, CtaBand, Accordion,
+            Card, Button
+  >>> "SHOW ME SOMETHING INTERACTIVE ON THE PUBLIC SITE" -- the FAQ accordion
+      is here.
+
+--------------------------------------------------------------------------------
+NOT FOUND (404)
+--------------------------------------------------------------------------------
+  URL       anything that does not exist, e.g. /banana
+  FILE      src/pages/public/NotFoundPage.jsx
+  WHAT      The page shown for a wrong address.
+  ON SCREEN Paw icon, "page not found" message, the address they typed,
+            "Back to home" button.
+  USES      PublicLayout, Button, PawIcon
+  HOOKS     useLocation (to show the address they typed)
+  >>> IMPORTANT: in src/App.jsx this route is `path="*"` and it MUST STAY
+      LAST. React Router picks the FIRST matching route, and "*" matches
+      everything -- if it moves up, every page in the app becomes a 404.
+
+
+################################################################################
+2.  ADMIN CONSOLE   (6 pages, all start with /admin)
+################################################################################
+
+--------------------------------------------------------------------------------
+ADMIN DASHBOARD
+--------------------------------------------------------------------------------
+  URL       /admin
+  FILE      src/pages/admin/AdminDashboard.jsx
+  WHAT      Platform-wide overview for the person who runs everything.
+  ON SCREEN Number tiles, a bar chart of adoptions by month, a pie chart of
+            applications by status, a shelter table, recent activity.
+            Buttons: "Add Quiz Question", "Manage"
+  USES      AdminLayout, StatTile, DataTable, Card, Button
+  CHARTS    Recharts: BarChart, PieChart, ResponsiveContainer, XAxis, YAxis,
+            Tooltip, Cell
+  COLOURS   src/lib/chartTheme.js -> SERIES, APPLICATION_STATUS, AXIS, GRID,
+            TOOLTIP
+  DATA      src/data/admin.js -> ADOPTIONS_BY_MONTH, APPLICATIONS_BY_STATUS,
+            SHELTERS, ACTIVITY
+
+--------------------------------------------------------------------------------
+SHELTERS
+--------------------------------------------------------------------------------
+  URL       /admin/shelters
+  FILE      src/pages/admin/SheltersPage.jsx
+  WHAT      Every shelter on the platform. Admin approves who can join.
+  ON SCREEN Number tiles, tabs (Active / Pending), a shelter table.
+            Buttons: "Add Shelter"  -> AddShelterModal
+                     "Edit"         -> edit a shelter
+                     approve/reject -> decide a shelter's application to join
+                     "Invite Staff" -> InviteStaffModal
+            Success pop-up after each action.
+  USES      AdminLayout, StatTile, DataTable, Card, Button, Input, Modal,
+            Tabs, AddShelterModal, SuccessModal
+  DATA      src/data/admin.js -> SHELTERS, STAFF
+  HOOKS     useState
+
+--------------------------------------------------------------------------------
+USERS
+--------------------------------------------------------------------------------
+  URL       /admin/users
+  FILE      src/pages/admin/UsersPage.jsx
+  WHAT      Every user account on the platform, with their role.
+  ON SCREEN Number tiles, tabs by role, a searchable user table,
+            "Invite Staff" button.
+  USES      AdminLayout, StatTile, DataTable, Card, Button, Tabs, Dropdown,
+            SuccessModal, InviteStaffModal
+  DATA      src/data/admin.js -> USERS
+  HOOKS     useState, useMemo (search + filter)
+  >>> THIS IS WHERE ROLES LIVE. When the backend is connected, changing a
+      user's role here changes what they can see -- because the role goes
+      into their login token.
+
+--------------------------------------------------------------------------------
+ANALYTICS
+--------------------------------------------------------------------------------
+  URL       /admin/analytics
+  FILE      src/pages/admin/AnalyticsPage.jsx
+  WHAT      The charts. Adoption trends, species breakdown, shelter performance.
+  ON SCREEN Date-range dropdown, number tiles, bar and pie charts, a
+            performance table, "View All History" button.
+  USES      AdminLayout, Dropdown, StatTile, DataTable, Card, Button
+  CHARTS    Recharts: BarChart, PieChart, ResponsiveContainer, XAxis, YAxis,
+            Tooltip, Cell
+  COLOURS   src/lib/chartTheme.js -> SERIES, APPLICATION_STATUS, PET_STATUS,
+            AXIS, GRID, TOOLTIP
+  DATA      src/data/admin.js -> ADOPTIONS_BY_MONTH, APPLICATIONS_BY_STATUS,
+            ADOPTIONS_BY_SPECIES and more
+  >>> MY SHOWPIECE PAGE. Demo this one.
+  >>> "WHY chartTheme.js?" -- Recharts has its own default colours. Without
+      that file the charts would look like a different product from the rest
+      of the app. Every chart colour comes from the same "pw" palette.
+
+--------------------------------------------------------------------------------
+REPORTS
+--------------------------------------------------------------------------------
+  URL       /admin/reports
+  FILE      src/pages/admin/ReportsPage.jsx
+  WHAT      Saved reports, and generating new ones.
+  ON SCREEN A list of past reports, a type filter.
+            Button "Generate" opens GenerateReportModal, where you pick a
+            report type, a shelter and a date range.
+  USES      AdminLayout, Card, Button, Dropdown, SuccessModal,
+            GenerateReportModal
+  DATA      src/data/admin.js -> REPORTS, REPORT_TYPES
+  HOOKS     useState, useMemo
+
+--------------------------------------------------------------------------------
+QUIZ QUESTIONS
+--------------------------------------------------------------------------------
+  URL       /admin/quiz
+  FILE      src/pages/admin/QuizQuestionsPage.jsx
+  WHAT      The question bank for the adopter eligibility quiz.
+  ON SCREEN Number tiles, tabs by category, a question table.
+            Button "Add Quiz Question" opens AddQuestionModal
+            ("Save Question" / "Cancel"). Questions can be edited and reordered.
+  USES      AdminLayout, StatTile, DataTable, Card, Button, Input, Modal,
+            Tabs, AddQuestionModal, SuccessModal
+  DATA      src/data/admin.js -> QUESTIONS
+  HOOKS     useState, useMemo
+  >>> THE BEST ARCHITECTURE POINT IN MY PART:
+      The quiz questions are DATA in the database, not code. An admin can
+      change what the quiz asks without a developer editing the app or
+      redeploying it. Behaviour that changes often should be data, not code.
+      These questions feed Teammate 1's EligibilityQuizModal.
+
+
+################################################################################
+3.  MY ADMIN COMPONENTS
+################################################################################
+
+  AdminLayout          components/admin/AdminLayout.jsx
+      The frame around every /admin page. A thin wrapper around PortalShell
+      (Teammate 2's) with the admin menu.
+
+  DataTable            components/admin/DataTable.jsx
+      ONE reusable table: columns, sorting, empty state, row actions.
+      Built from Card.
+      >>> USED BY 7 PAGES ACROSS THE WHOLE TEAM -- my 5 admin pages AND
+          Teammate 2's applications, pets and care pages. Say this: one
+          table component instead of seven hand-written tables.
+
+  StatTile             components/admin/StatTile.jsx
+      One number box: label, big number, change indicator. Built from Card.
+      Also used by Teammate 2 on the staff pages.
+
+  AddShelterModal      components/admin/AddShelterModal.jsx
+      Add a shelter. "Add Shelter" / "Cancel".
+      Modal, Button, Input, Select, Textarea, FileDrop.
+
+  InviteStaffModal     components/admin/InviteStaffModal.jsx
+      Invite a staff member by email to a chosen shelter.
+      "Send invitation" / "Cancel". Modal, Button, Input, Select.
+
+  AddQuestionModal     components/admin/AddQuestionModal.jsx
+      Add a quiz question with its type and answer options.
+      "Save Question" / "Cancel". Modal, Button, Select, Textarea, Segmented.
+
+  GenerateReportModal  components/admin/GenerateReportModal.jsx
+      Pick report type, shelter and date range. "Generate" / "Cancel".
+      Modal, Button, Input, Select.
+
+
+################################################################################
+4.  SITE CHROME   --  what makes all three areas look like one product
+################################################################################
+
+  PublicLayout    components/layout/PublicLayout.jsx
+      Wraps every public page. It is just PublicNav + the page + PublicFooter.
+
+  PublicNav       components/layout/PublicNav.jsx
+      The top menu bar. Buttons: "Log in", "Sign up". Mobile menu uses useState.
+      >>> I OWN NAVIGATION. When the other two add a page that needs a menu
+          link, they ask me. One person owning the menu is why the site
+          structure stays consistent.
+
+  PublicFooter    components/layout/PublicFooter.jsx
+      Footer links and the logo.
+
+  AuthLayout      components/layout/AuthLayout.jsx
+      The centred frame around login and register.
+      >>> TEAMMATE 1'S FOUR AUTH PAGES ALL IMPORT THIS FROM MY FOLDER.
+
+  ScrollToTop     components/layout/ScrollToTop.jsx
+      Jumps to the top of the page whenever the address changes.
+      Uses useEffect + useLocation. It sits in App.jsx, inside the Router but
+      outside Routes, so it sees every navigation.
+      >>> WHY IT EXISTS: in a single page app the browser never reloads, so
+          your scroll position stays where it was. Clicking a footer link
+          would drop you halfway down the next page.
+
+  Logo / PawIcon  components/brand/Logo.jsx, PawIcon.jsx
+      The logo and the paw mark, in one place. Logo is built from PawIcon.
+      Used by PublicNav, PublicFooter, AuthLayout, PortalShell and
+      Teammate 1's auth pages.
+
+  SECTIONS        components/sections/
+      SectionHeading.jsx   a titled section header
+      FeatureRow.jsx       an icon + text + image row
+      CtaBand.jsx          the coloured "get started" strip (uses Button)
+      >>> These are why Landing, About, Features and Services share the same
+          rhythm instead of each inventing its own spacing.
+
+
+################################################################################
+5.  IF THE TEACHER SAYS "SHOW ME..."   --  quick lookup
+################################################################################
+
+  "the home page"               /                   pages/public/LandingPage.jsx
+  "the nav bar"                 components/layout/PublicNav.jsx
+  "the footer"                  components/layout/PublicFooter.jsx
+  "the logo"                    components/brand/Logo.jsx
+  "the 404 page"                type /banana        pages/public/NotFoundPage.jsx
+  "why 404 must be last"        src/App.jsx, the path="*" route
+  "an accordion / FAQ"          /services           components/ui/Accordion.jsx
+  "the admin dashboard"         /admin              pages/admin/AdminDashboard.jsx
+  "a chart"                     /admin/analytics    pages/admin/AnalyticsPage.jsx
+  "where chart colours come
+   from"                        src/lib/chartTheme.js
+  "a data table"                components/admin/DataTable.jsx
+  "where roles are managed"     /admin/users        pages/admin/UsersPage.jsx
+  "the quiz question bank"      /admin/quiz         pages/admin/QuizQuestionsPage.jsx
+  "a modal"                     components/admin/AddShelterModal.jsx
+  "the admin sidebar"           components/admin/AdminLayout.jsx
+                                (which uses components/portal/PortalShell.jsx)
+  "scroll behaviour"            components/layout/ScrollToTop.jsx
+  "where the fake data is"      src/data/admin.js
+  "where all the routes are"    src/App.jsx
+
+
+################################################################################
+6.  THINGS TO KNOW BEFORE THE DEMO
+################################################################################
+
+* I DO NOT own components/ui/ -- that is Teammate 2. I import Button, Card,
+  Modal, Input, Tabs, Dropdown, Accordion and SuccessModal from them.
+* I DO NOT own PetCard -- that is Teammate 1's. My landing page uses it for
+  the featured pets strip.
+* I DO own DataTable and StatTile, and Teammate 2 reuses them on three of
+  their pages. Cross-team reuse in both directions.
+* My pages read from src/data/admin.js, not the backend yet.
+* Connecting the shelter table is one line:
+        useEffect(() => { api.get("/shelters").then(r => setRows(r.data)); }, []);
+  and "Add Shelter" becomes api.post("/shelters", form).
+* No route is guarded yet. Typing /admin works for anyone. The real protection
+  is @PreAuthorize("hasRole('ADMIN')") on the backend endpoints -- even with
+  the page open, every request it makes would be refused with 403.

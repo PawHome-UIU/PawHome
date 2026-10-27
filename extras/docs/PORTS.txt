@@ -1,0 +1,45 @@
+PAWHOME - PORT MAP
+==================
+
+  SERVICE          PAWHOME       CHA GHOR      NOTE
+  -------------------------------------------------------------------
+  MySQL            3307          -             3306 = any system MySQL
+  Backend          8081          8080
+  Vite dev         5174          5173
+  Vite preview     4174          4173
+  AI service       8001          8000          not built
+  Ollama           11434         11434         shared daemon, no conflict
+
+  Cha Ghor runs PostgreSQL on 5433; Pawhome no longer uses Postgres at all,
+  so the two projects cannot collide on a database port.
+
+  A third project goes 3308 / 8082 / 5175 / 4175 / 8002.
+
+WHERE EACH PORT IS SET
+----------------------
+  3307   docker/docker-compose.yml         ports: "3307:3306"
+         backend/.../application.yaml      spring.datasource.url
+         backend/pom.xml                   flyway-maven-plugin <url>
+  8081   backend/.../application.yaml      server.port
+         frontend/.env.example             VITE_API_URL
+         frontend/src/lib/config.js        API_BASE fallback
+  5174   frontend/vite.config.js           server.port
+         backend/.../application.yaml      app.cors.allowed-origins
+  4174   frontend/vite.config.js           preview.port
+
+CHANGE ONE, CHANGE ALL OF ITS ROWS.
+
+CHECK WHAT IS LISTENING
+-----------------------
+  lsof -i :3307
+  lsof -i :8081
+  lsof -i :5174
+  docker ps
+
+DATABASE QUICK ACCESS
+---------------------
+  docker exec -it pawhome-mysql mysql -u pawhome -ppawhome_dev_pw pawhome
+  docker compose -f docker/docker-compose.yml logs -f pawhome-db
+
+  Reset everything (DELETES ALL DATA, re-runs both migrations):
+    cd docker && docker compose down -v && docker compose up -d

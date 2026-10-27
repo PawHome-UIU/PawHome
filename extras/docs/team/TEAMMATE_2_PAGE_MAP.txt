@@ -1,0 +1,253 @@
+================================================================================
+TEAMMATE 2  --  MY PAGES, ONE BY ONE
+Shelter staff console + the shared UI kit + Settings
+================================================================================
+
+Use this in the demo. For every page you get:
+  URL / FILE / WHAT / ON SCREEN / USES / DATA
+
+I have 7 pages, 6 staff modals, and 10 UI components that the WHOLE TEAM uses.
+
+
+################################################################################
+1.  STAFF PAGES   (6 pages, all start with /staff)
+################################################################################
+
+--------------------------------------------------------------------------------
+STAFF DASHBOARD
+--------------------------------------------------------------------------------
+  URL       /staff
+  FILE      src/pages/staff/StaffDashboard.jsx
+  WHAT      The shelter worker's home screen.
+  ON SCREEN Number tiles (pets in care, pending applications, tasks today),
+            today's care tasks, recent applications.
+            Buttons: "Review Applications", "View Activity History",
+            "See Success Stories"
+  USES      StaffLayout, PanelCard, StatTile, Button
+  DATA      src/data/staff.js -> CARE_TASKS, RECENT_APPLICATIONS
+  NOTE      This file also EXPORTS a small piece called TaskTypePill, which
+            the Care & Health page imports. Good example of sharing a tiny
+            component without making a new file.
+
+--------------------------------------------------------------------------------
+PETS MANAGEMENT
+--------------------------------------------------------------------------------
+  URL       /staff/pets
+  FILE      src/pages/staff/PetsManagementPage.jsx
+  WHAT      The shelter's pet list. Where a new rescue is entered.
+  ON SCREEN A searchable table of pets with status badges.
+            Buttons: "Add Pet" (opens AddPetModal), "Edit" / "Edit Profile"
+            (opens the SAME modal in edit mode).
+            A success pop-up confirms the save.
+  USES      StaffLayout, StatusBadge, DataTable, Card, Button, Input, Modal,
+            Dropdown, AddPetModal, SuccessModal
+  DATA      src/data/staff.js -> STAFF_PETS
+  HOOKS     useState, useMemo (search + filter)
+  >>> ONE MODAL DOES ADD AND EDIT. It just changes its title and the save
+      button text ("Add pet" / "Save changes"). Two separate modals would be
+      the same code written twice.
+
+--------------------------------------------------------------------------------
+APPLICATIONS LIST
+--------------------------------------------------------------------------------
+  URL       /staff/applications
+  FILE      src/pages/staff/ApplicationsPage.jsx
+  WHAT      Every adoption application waiting for a decision.
+  ON SCREEN Number tiles, tabs (Pending / Approved / Declined), a table of
+            applications. Clicking a row opens the review page.
+  USES      StaffLayout, StatTile, DataTable, Button, Tabs
+  DATA      src/data/staff.js -> APPLICATIONS
+  HOOKS     useState (tab), useMemo (filtering)
+
+--------------------------------------------------------------------------------
+APPLICATION REVIEW
+--------------------------------------------------------------------------------
+  URL       /staff/applications/:id      example: /staff/applications/1
+  FILE      src/pages/staff/ApplicationReviewPage.jsx
+  WHAT      One application in full, with the adopter's answers, so staff can
+            decide. THE MOST IMPORTANT PAGE IN MY PART.
+  ON SCREEN The adopter's details and quiz answers, the pet they applied for.
+            Buttons: "Approve"  -> sets decision to APPROVED, shows a success
+                                   pop-up, then goes back to the list.
+                     "Decline"  -> opens DeclineApplicationModal, which asks
+                                   for a REASON first.
+  USES      StaffLayout, Card, Button, Modal, StatusBadge, SuccessModal,
+            DeclineApplicationModal
+  DATA      src/data/staff.js -> APPLICATION_DETAIL
+  HOOKS     useState (decision), useNavigate (back to the list after deciding)
+  >>> WHY DECLINE ASKS FOR A REASON AND APPROVE DOES NOT:
+      Declining is the decision the adopter will question. Recording why means
+      staff can explain it later. Approving needs no explanation.
+
+--------------------------------------------------------------------------------
+CARE AND HEALTH
+--------------------------------------------------------------------------------
+  URL       /staff/care
+  FILE      src/pages/staff/CareHealthPage.jsx
+  WHAT      Health records: care tasks, treatment logs, vaccinations.
+  ON SCREEN Tabs (Tasks / Logs / Vaccinations), tables for each,
+            a form to write a care note.
+            Buttons: "Save Log", "Cancel", and Add Vaccination which opens
+            AddVaccinationModal ("Save Vaccination").
+  USES      StaffLayout, PanelCard, DataTable, Card, Button, Input, Modal,
+            Tabs, TaskTypePill (from StaffDashboard), AddVaccinationModal,
+            SuccessModal
+  DATA      src/data/staff.js -> CARE_TASKS, CARE_LOGS, VACCINATIONS, STAFF_PETS
+  HOOKS     useState
+  NOTE      This is my most complex page -- it pulls from four data sets.
+
+--------------------------------------------------------------------------------
+BOARDING
+--------------------------------------------------------------------------------
+  URL       /staff/boarding
+  FILE      src/pages/staff/BoardingPage.jsx
+  WHAT      Boarding requests from adopters, and current stays.
+  ON SCREEN Number tiles, tabs (Requests / Active), request cards.
+            Buttons: "Accept"           approve the booking
+                     "Accept & Assign"  approve AND give it a kennel in one step
+                     "Decline"          opens DeclineBoardingModal (asks a reason)
+                     "Cancel"           close without doing anything
+            Also "Post update" via PostBoardingUpdateModal, to message the owner.
+  USES      StaffLayout, StatTile, Card, Button, Modal, Tabs, SuccessModal,
+            PostBoardingUpdateModal, DeclineBoardingModal
+  DATA      src/data/staff.js -> BOARDINGS, BOARDING_REQUESTS
+  HOOKS     useState
+  >>> "Accept & Assign" exists because accepting and then assigning a kennel
+      as two separate clicks was extra work for no reason.
+
+--------------------------------------------------------------------------------
+SETTINGS
+--------------------------------------------------------------------------------
+  URL       /staff/settings   AND   /admin/settings   AND   /app/settings
+  FILE      src/pages/SettingsPage.jsx
+  WHAT      ONE settings page shared by all three portals.
+  ON SCREEN Tabs: Profile, Password, Notifications.
+            Buttons: "Save changes", "Update password".
+  USES      AdminLayout, StaffLayout, AdopterLayout (it imports ALL THREE),
+            Card, Button, Input, Tabs, SuccessModal, Textarea
+  HOOKS     useLocation (reads the web address), useState
+  >>> HOW ONE FILE SERVES THREE PORTALS -- the best question in my part:
+      useLocation() tells it whether the address starts with /admin, /staff
+      or /app, and it wraps itself in the matching layout. The content is
+      identical for everyone, so three copies would mean fixing every bug
+      three times.
+
+
+################################################################################
+2.  MY STAFF MODALS   (pop-up windows)
+################################################################################
+
+  AddPetModal              components/staff/AddPetModal.jsx
+      Add a new pet, or edit an existing one. Button reads "Add pet" or
+      "Save changes" depending on the mode.
+      Built from: Modal, Button, Input, and Select/Textarea/Segmented/
+      ChipGroup/FileDrop from Field.jsx.
+
+  AddVaccinationModal      components/staff/AddVaccinationModal.jsx
+      Record a vaccination. Button "Save Vaccination".
+      Built from: Modal, Button, Input, Select/Textarea/Segmented/FileDrop.
+
+  DeclineApplicationModal  components/staff/DeclineApplicationModal.jsx
+      Asks for a reason before declining an adoption application.
+      Built from: Modal, Button, Select, Textarea.
+      Reads the reason list from data/staff.js -> DECLINE_REASONS.
+
+  DeclineBoardingModal     components/staff/DeclineBoardingModal.jsx
+      Same, for a boarding request. Modal, Button, Select, Textarea.
+
+  PostBoardingUpdateModal  components/staff/PostBoardingUpdateModal.jsx
+      Send the owner an update about their pet's stay, with a photo.
+      Button "Post update". Modal, Button, Textarea, FileDrop.
+
+  StaffLayout              components/staff/StaffLayout.jsx
+      The frame around every /staff page. A thin wrapper around PortalShell
+      with the staff menu items.
+
+
+################################################################################
+3.  THE UI KIT   --  MY MOST IMPORTANT WORK
+################################################################################
+
+src/components/ui/  --  10 files used by all 29 pages in the project.
+
+  Button.jsx        Every button in the app. Has variants (primary, outline,
+                    danger) and sizes.
+  Input.jsx         Text boxes.
+  Field.jsx         The biggest one. Exports Select, Textarea, Segmented,
+                    ChipGroup and FileDrop -- all the form controls that are
+                    not a plain text box.
+  Checkbox.jsx      Tick boxes.
+  Dropdown.jsx      Select menus. Uses useEffect to close when you click away.
+  Card.jsx          The white rounded box used everywhere.
+  Modal.jsx         The pop-up frame: dark background, centred box, closes on
+                    the Escape key (that is the useEffect inside it).
+                    EVERY modal in the project is built on this one file.
+  SuccessModal.jsx  The green "that worked" confirmation. Built from Button.
+  Tabs.jsx          Tab switching inside a page.
+  Accordion.jsx     Expand / collapse sections (used on the FAQ).
+
+  PortalShell.jsx   components/portal/PortalShell.jsx
+      The shared frame for ALL THREE logged-in portals: sidebar, top bar,
+      content area. AdminLayout, StaffLayout and AdopterLayout are each a
+      few lines that pass it different menu items.
+      >>> IF THE TEACHER ASKS "WHY DO ALL THREE PORTALS LOOK THE SAME?" --
+          this is the file. One shell, three menus.
+
+  PanelCard.jsx     components/portal/PanelCard.jsx
+      A titled panel used inside those portals.
+
+WHAT TO SAY ABOUT THE UI KIT:
+  "Nobody on our team hand-writes a button. Every input, modal and card on
+   all 29 screens comes from these 10 files. Change the button style once and
+   it changes everywhere."
+
+MY RULES AS THE OWNER:
+  * No colour codes like #4a7c59 inside these files. Everything uses the "pw"
+    palette in tailwind.config.js.
+  * I ADD props, I never RENAME them -- renaming would silently break every
+    page the other two wrote.
+  * If someone needs a new button style, I add it here. They never copy
+    Button.jsx into their own folder.
+
+
+################################################################################
+4.  IF THE TEACHER SAYS "SHOW ME..."   --  quick lookup
+################################################################################
+
+  "the staff dashboard"         /staff              pages/staff/StaffDashboard.jsx
+  "how you add a pet"           /staff/pets, click Add Pet
+                                components/staff/AddPetModal.jsx
+  "add and edit in one modal"   same file, look at the `editing` check
+  "reviewing an application"    /staff/applications/1
+                                pages/staff/ApplicationReviewPage.jsx
+  "a confirmation before a
+   destructive action"          components/staff/DeclineApplicationModal.jsx
+  "tabs"                        /staff/applications, components/ui/Tabs.jsx
+  "a data table"                components/admin/DataTable.jsx (Teammate 3's,
+                                I reuse it on 3 pages)
+  "the button component"        components/ui/Button.jsx
+  "the modal component"         components/ui/Modal.jsx
+  "how a modal closes on Esc"   the useEffect inside Modal.jsx
+  "form controls / dropdowns"   components/ui/Field.jsx and Dropdown.jsx
+  "the sidebar"                 components/portal/PortalShell.jsx
+  "one page for three portals"  /staff/settings vs /admin/settings
+                                pages/SettingsPage.jsx, the useLocation line
+  "where the fake data is"      src/data/staff.js
+  "where all the routes are"    src/App.jsx
+
+
+################################################################################
+5.  THINGS TO KNOW BEFORE THE DEMO
+################################################################################
+
+* I OWN components/ui/. Both other teammates import from it on every page.
+  That makes me the most depended-on person -- and it is why I had to build
+  Button, Input and Modal FIRST, before my own staff pages.
+* I DO NOT own DataTable or StatTile -- those are Teammate 3's admin
+  components. I reuse them on my list pages instead of writing new ones.
+* I DO NOT own PetCard or StatusBadge -- those are Teammate 1's. I use
+  StatusBadge on the pets and application pages.
+* My pages read from src/data/staff.js, not the backend yet.
+* Connecting "Add Pet" to the real API is one line in the save handler:
+        await api.post("/pets", form);
+  The Axios client already attaches the login token automatically.

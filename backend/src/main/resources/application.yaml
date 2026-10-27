@@ -1,0 +1,208 @@
+# backend/src/main/resources/application.yaml
+#
+# EVERY value uses ${ENV_VAR:default}. That is deliberate: a fresh clone runs
+# with no setup at all, and any environment can override without editing files.
+spring:
+  application:
+    name: pawhome-backend
+
+  # Pulls in application-secret.yaml when it exists. That file is in
+  # .gitignore, so it is where anything private goes -- the Gmail app password
+  # above all. `optional:` means a fresh clone with no such file still starts.
+  #
+  # Anything defined there OVERRIDES what is set here, so a single line in that
+  # file is enough to fill in a secret without editing this one.
+  config:
+    import: optional:classpath:application-secret.yaml
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  datasource:
+    # Host port 3307. 3306 = any system MySQL. See docs/PORTS.txt.
+    #
+    # The URL parameters are not optional:
+    #   useSSL=false                 the dev container has no certificate
+    #   allowPublicKeyRetrieval=true MySQL 8 defaults to caching_sha2_password;
+    #                                without this the first connection fails
+    #   serverTimezone=UTC           MySQL has no timezone-aware column type, so
+    #                                everything is stored and read as UTC
+    url: "${DB_URL:jdbc:mysql://localhost:3307/pawhome?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8}"
+    username: ${DB_USERNAME:pawhome}
+    password: ${DB_PASSWORD:pawhome_dev_pw}   # override in every real environment
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  mail:
+    # Gmail SMTP. STARTTLS on 587 is the modern choice; 465 (SSL) also works but
+    # needs different properties.
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:unim3544@gmail.com}
+    #
+    # ***  NOT your Gmail password.  ***
+    #
+    # Google stopped accepting account passwords over SMTP. You need an APP
+    # PASSWORD: a 16-character code tied to this one application, revocable on
+    # its own, and useless for signing in to the account itself.
+    #
+    #   1. Turn on 2-Step Verification   myaccount.google.com/security
+    #   2. Create an app password        myaccount.google.com/apppasswords
+    #   3. Export it, never commit it:
+    #        export MAIL_PASSWORD="abcdefghijklmnop"
+    #
+    # PUT THE REAL VALUE IN application-secret.yaml, NOT HERE. That file is
+    # gitignored; this one is not, and an app password in a public repo is an
+    # open relay under your own name.
+    #
+    # The empty default exists so a fresh clone boots. It cannot send anything,
+    # which is why app.mail.enabled defaults to false below -- a blank password
+    # and mail switched on would fail on the first registration instead.
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+  jpa:
+    hibernate:
+      # validate, NEVER update. Flyway owns the schema; Hibernate only checks
+      # that the @Entity classes match what the migrations actually built.
+      # A "Schema-validation: missing table" error means the entity and the
+      # migration disagree -- fix the entity, or add a new migration.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
+
+  flyway:
+    # ENABLED. V1__init.sql and V2__seed_reference_data.sql exist.
+    #
+    # Naming: V<number>__<name>.sql -- TWO underscores. Get it wrong and Flyway
+    # silently ignores the file.
+    #
+    # NEVER edit a migration that has already run: Flyway stores a checksum and
+    # will refuse to start. Add a new V3__ instead. In dev you may reset with
+    #   cd docker && docker compose down -v      (this DELETES all data)
+    enabled: ${FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: 8081
+  error:
+    include-message: on_param        # only echo the message when ?message=... is passed
+    include-stacktrace: never        # never leak stack traces to clients
+    include-binding-errors: never    # validation detail comes from GlobalExceptionHandler
+
+app:
+  uploads:
+    dir: ${APP_UPLOADS_DIR:uploads}
+
+  # WHERE GENERATED REPORTS GO, AND IT IS NOT app.uploads.dir. That is a
+  # security boundary, not filing: GET /api/v1/files/** is permitAll so a guest
+  # can see a pet's photo, and an Adoption Summary carries adopter names,
+  # emails and what each of them paid. A separate root means there is no string
+  # a caller can put in the public files URL that reaches a report -- see
+  # ReportStorage. Reports are served only by AdminReportController.
+  reports:
+    dir: ${APP_REPORTS_DIR:reports}
+
+  # Where the browser reaches the frontend. Used to build the links inside
+  # emails, so a wrong value here produces mail whose buttons go nowhere.
+  public-url: ${APP_PUBLIC_URL:http://localhost:5174}
+
+  quiz:
+    # The eligibility bar, as a PERCENTAGE of what the attempt could have
+    # scored -- not a fixed number of points. An absolute threshold silently
+    # changes meaning the moment an admin adds or archives a question, because
+    # the maximum moves underneath it.
+    #
+    # Failing does not block an application: the schema has a decline code
+    # called FAILED_ELIGIBILITY, which only makes sense if a failing applicant
+    # can still apply and be refused by a person.
+    pass-percent: ${APP_QUIZ_PASS_PERCENT:60}
+
+  mail:
+    # The visible sender. Gmail rewrites From to the authenticated account
+    # anyway, so this should match spring.mail.username or the two disagree.
+    from: ${APP_MAIL_FROM:unim3544@gmail.com}
+    from-name: ${APP_MAIL_FROM_NAME:PawHome}
+    #
+    # Set false to develop without sending anything. Messages are logged as
+    # "[mail disabled] would have sent ..." with the SUBJECT only -- never the
+    # body, because these carry verification and reset links.
+    enabled: ${APP_MAIL_ENABLED:false}
+    # The nightly vaccination reminder. Separate switch, so you can keep
+    # verification email on while testing without mailing every adopter.
+    reminders-enabled: ${APP_MAIL_REMINDERS_ENABLED:false}
+    reminder-cron: ${APP_MAIL_REMINDER_CRON:0 0 7 * * *}
+
+  billing:
+    # WHEN EVERY LIVE DAYCARE SUBSCRIPTION IS BILLED. Six fields, Spring's
+    # order: second minute hour day-of-month month day-of-week. So this is
+    # 03:00 UTC on the 1st -- outside every plausible working day, so the
+    # notifications land before anybody opens the app rather than while a
+    # staff member is mid-checkout.
+    #
+    # IT IS A PROPERTY SO A DEMO CAN SEE IT FIRE. Nobody watching has a month
+    # to wait, and editing a @Scheduled annotation to show a monthly job is
+    # how the real cron gets committed wrong. Every minute:
+    #
+    #     APP_BILLING_MONTHLY_CRON="0 * * * * *" ./mvnw spring-boot:run
+    #
+    # Safe to do: uq_slip_period (subscription_id, period_from) means the
+    # second run of the same month issues nothing, so it prints
+    # "0 slip(s) issued" rather than billing anyone twice.
+    monthly-cron: ${APP_BILLING_MONTHLY_CRON:0 0 3 1 * *}
+
+  tokens:
+    # Verification links survive a night's sleep. Reset links do not: a reset
+    # hands over the account outright, so its window is as short as someone can
+    # reasonably act in.
+    verification-hours: ${APP_TOKEN_VERIFICATION_HOURS:48}
+    reset-minutes: ${APP_TOKEN_RESET_MINUTES:60}
+
+  jwt:
+    # THIS DEFAULT IS DEV-ONLY and will be in your git history the moment you
+    # commit. It exists so a fresh clone boots with no setup.
+    #
+    # Minimum 48 characters -- HS384 signs with a 384-bit key.
+    # Generate a real one:  openssl rand -hex 32
+    #
+    # TODO: when you port Cha Ghor's JwtService, its DEV_SECRET constant must
+    # equal this string EXACTLY, or the "you are using the dev key" guard
+    # silently stops working.
+    secret: ${APP_JWT_SECRET:dev-only-pawhome-ed8682d5622bbca5df9e4e398e1c5eb3d8b72a16}
+    expiration-ms: ${APP_JWT_EXPIRATION_MS:86400000}   # 24h
+
+  cors:
+    # Comma-separated browser origins allowed to call the API.
+    # Vite dev server runs on 5174 (Cha Ghor uses 5173).
+    #
+    # NOTE: SecurityConfig uses setAllowedOrigins, which is EXACT match --
+    # wildcards like http://192.168.*.*:5174 will NOT work here. Use the exact
+    # IP when demoing on a phone. (This is a bug Cha Ghor has; do not copy it.)
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5174}
+
+logging:
+  level:
+    # DEBUG/TRACE here leak tokens, headers and auth internals into logs.
+    org.springframework.security: INFO
+
+# TO SEE THE SQL -- including the INSERTs and UPDATEs that repository.save()
+# generates and that no @Query can show -- start with the sqllog profile:
+#
+#     ./mvnw spring-boot:run -Dspring-boot.run.profiles=sqllog
+#
+# See application-sqllog.yaml. Off by default: it prints every statement and
+# every bound value, password hashes included.

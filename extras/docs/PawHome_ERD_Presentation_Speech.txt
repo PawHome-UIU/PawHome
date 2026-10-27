@@ -1,0 +1,355 @@
+===============================================================================
+PAWHOME - ENTITY RELATIONSHIP DIAGRAM
+Presentation speech
+CSE 3522 - Database Management Systems Laboratory
+===============================================================================
+
+HOW TO USE THIS SCRIPT
+
+  Total speaking time is about 8 minutes at a normal pace.
+  Lines in [square brackets] are stage directions - do not read them out.
+  A "/" marks a place to breathe.
+
+  Slide / page cues refer to the eight pages inside docs/pawhome-erd.drawio.
+
+
+===============================================================================
+PART 1 - OVERVIEW                                        (about 1 minute)
+[Open on page 1, "Full ERD". Let them look at it for two seconds
+ before you start talking.]
+===============================================================================
+
+Good morning. I am going to walk you through the database design for
+PawHome - our pet adoption and boarding management system.
+
+What you are looking at is the complete schema. / Twenty-seven tables,
+fifty-three foreign keys, built on MySQL 8.4 with the InnoDB engine.
+
+It looks like a lot. But the whole diagram is organised around just two
+tables. [Point to users, then to pets.]
+
+This one is USERS. Twenty of the twenty-seven tables point back to it.
+This one is PETS. Nine tables point back to that.
+
+Everything else is one of five areas of the system. Identity and shelters.
+Pets, traits and health. The matching quiz. Adoption. And boarding and care.
+
+So the way to read this diagram is not left to right. It is: find the two
+hubs, then follow the lines outward. That is what I will do now.
+
+
+===============================================================================
+PART 2 - THE IMPORTANT TABLES AND THEIR KEY ATTRIBUTES   (about 3 minutes)
+[Move to page 2, "Identity, shelters and access".]
+===============================================================================
+
+--- SHELTERS ---
+
+We start at the root of the whole design: SHELTERS.
+
+This table has no foreign keys at all. Nothing above it. Every other
+table in the system eventually traces back here.
+
+Its key attributes are the primary key ID, and a UNIQUE constraint on
+NAME - so two shelters cannot register under the same name. It also
+carries CAPACITY and BOARDING_RATE_DAILY, because a shelter is not only
+an address in this system, it is a place with a limit and a price.
+
+--- USERS ---
+
+Next, USERS. This is the single most important table in the design.
+
+The important decision here is that we did NOT build three tables for
+three kinds of people. There is no separate "adopters" table, no separate
+"staff" table. There is one USERS table with a ROLE column - an ENUM of
+ADOPTER, STAFF or ADMIN. [Point to the role row.]
+
+Why? Because an adopter and a staff member share almost every attribute -
+name, email, password, phone. Splitting them would have meant duplicating
+all of that, and duplicating the login logic three times.
+
+The key attributes are:
+
+  ID              - primary key
+  EMAIL           - UNIQUE. This is what someone logs in with.
+  ROLE            - which of the three kinds of account this is
+  APPROVAL_STATUS - PENDING, APPROVED or REJECTED
+  EMAIL_VERIFIED  - has this person confirmed their address
+  IS_ACTIVE       - the kill switch
+  SHELTER_ID      - nullable foreign key to shelters
+
+Notice those three separate flags. [Point to approval_status,
+email_verified, is_active.] A person can only sign in when all three are
+satisfied. They are kept apart on purpose, because each one refuses for a
+different reason: an admin has not approved you yet; you never clicked the
+link in your email; or your account was switched off.
+
+Now look at SHELTER_ID. It is in italics on the diagram, which means it is
+nullable. That is deliberate. Only STAFF belong to a shelter. Every adopter
+in the system has NULL here. And there is a CHECK constraint on the table
+that enforces exactly that - a row cannot claim to be an ADOPTER and still
+name a shelter.
+
+--- PETS ---
+
+[Move to page 3, "Pets, traits and health".]
+
+PETS is the second hub.
+
+  ID          - primary key
+  SHELTER_ID  - which shelter is housing this animal
+  STATUS      - AVAILABLE, PENDING, ADOPTED, and so on
+  OWNER_ID    - nullable
+  CREATED_BY  - which staff member listed it
+
+The interesting one is OWNER_ID, and it is nullable for a real reason.
+A pet in this system is one of two things. Either it is a shelter animal
+waiting to be adopted - and then it has no owner, so this is NULL. Or it
+is somebody's own pet that has come in for boarding - and then OWNER_ID
+points at that person.
+
+One table, two situations, separated by whether a column is NULL.
+
+--- THE QUIZ TABLES ---
+
+[Move to page 4, "The matching quiz".]
+
+The matching quiz is five tables. QUIZ_QUESTIONS holds the questions.
+QUIZ_OPTIONS holds the possible answers to each question. QUIZ_ATTEMPTS is
+one person sitting the quiz once. QUIZ_ANSWERS is what they picked.
+
+And OPTION_TRAITS is the scoring rule - it says which personality traits
+each answer counts towards. That is how we turn "I live in a small flat
+and I work long hours" into a recommendation for a calm, independent cat.
+
+--- ADOPTION ---
+
+[Move to page 5, "Adoption".]
+
+Two tables here, and the difference between them matters.
+
+ADOPTION_APPLICATIONS is a request. Somebody applied. It may be approved,
+it may be declined.
+
+ADOPTIONS is the completed fact. The animal actually went home.
+
+We kept them separate because an application is a conversation and an
+adoption is a permanent record. Merging them would mean a table where half
+the rows are things that never happened.
+
+--- BOARDING ---
+
+[Move to page 6, "Boarding and care".]
+
+BOARDING_REQUESTS is the widest table in the schema - it carries six
+foreign keys at once: the pet, the owner, the shelter, the suite, the quiz
+attempt, and the staff member who reviewed it. That is because a boarding
+booking genuinely does touch six different things.
+
+Hanging off it are BOARDING_INSTRUCTIONS - the owner's care notes,
+BOARDING_UPDATES - the photo updates staff post back to the owner, and
+CARE_TASKS and CARE_LOGS - what needs doing each day and what actually
+got done.
+
+--- SECURITY AND HEALTH ---
+
+Two small tables worth naming.
+
+USER_TOKENS handles email verification and password reset. Look at the
+column: TOKEN_HASH, not "token". We never store the link we emailed - only
+a SHA-256 of it. If this database ever leaked, it would not be a stack of
+live "click here to take over this account" links.
+
+HEALTH_REMINDERS_SENT has a UNIQUE constraint on vaccination plus reminder
+kind. That single constraint is what guarantees the system emails an owner
+about a due vaccination exactly once, and not every time the job runs.
+
+
+===============================================================================
+PART 3 - THE RELATIONSHIPS                               (about 2 minutes)
+[Go back to page 1, the Full ERD. Or use page 0 for the notation.]
+===============================================================================
+
+Before I describe the relationships - one word on notation.
+
+We used crow's foot notation, in black and white only. The crow's foot is
+always on the child - the table that holds the foreign key. A solid line
+means the foreign key is NOT NULL, so the parent is mandatory. A dashed
+line means it is nullable, so the parent is optional.
+
+Now, the relationships themselves.
+
+ONE-TO-MANY is the shape of most of this diagram:
+
+  One shelter has many staff, many pets, many suites, many adoptions.
+  One user files many applications, saves many favourites, and takes
+    many quiz attempts.
+  One pet has many photos, many vaccinations, and many applications
+    against it.
+
+ONE-TO-ONE appears exactly once, and it is worth pointing out.
+[Point to the line between adoption_applications and adoptions.]
+
+ADOPTIONS.APPLICATION_ID carries a UNIQUE constraint. Because it is unique,
+the many side collapses to one. One application can settle into at most one
+adoption. You cannot adopt the same animal twice off the same paperwork -
+and that is not enforced by our code, it is enforced by the database.
+
+MANY-TO-MANY appears three times, and I will come back to those in a
+moment, because they are the heart of the normalisation.
+
+Finally, OPTIONAL versus MANDATORY. Compare these two lines.
+[Point to a solid line, then a dashed one.]
+
+PETS.SHELTER_ID is solid - every pet must be at a shelter. There is no such
+thing as an animal in this system with nowhere to be.
+
+USERS.SHELTER_ID is dashed - most users have no shelter, because most users
+are adopters.
+
+The line style is telling you a business rule, not just drawing a link.
+
+
+===============================================================================
+PART 4 - NORMALISATION                                   (about 2 minutes)
+[Move to page 7, "Normalisation".]
+===============================================================================
+
+--- FIRST NORMAL FORM ---
+
+First normal form says: no repeating groups, no lists inside a column.
+
+The shortcut we deliberately did not take was a TRAITS column on the PETS
+table holding the text "calm, good with kids, house trained".
+
+That breaks the very first question anyone will ask this database - show me
+every calm dog. With a comma-separated string, that becomes a LIKE over
+text. It cannot be indexed. And nothing stops "calm" and "Calm" becoming
+two different traits.
+
+So every repeating group became its own table: PET_TRAITS, OPTION_TRAITS,
+FAVORITES, PET_PHOTOS, BOARDING_INSTRUCTIONS, QUIZ_ANSWERS.
+
+Every cell in this schema holds exactly one value.
+
+--- RESOLVING MANY-TO-MANY ---
+
+That is also how we resolved the three many-to-many relationships.
+
+A pet has many traits, and a trait describes many pets. No relational table
+can hold that directly. So PET_TRAITS sits between them, and its primary
+key is the pair of foreign keys together - marked PF on the diagram.
+
+[Point to pet_traits.]
+
+The pair being the key is the important part. It means the same pet and the
+same trait physically cannot be recorded twice.
+
+The other two are OPTION_TRAITS - between quiz options and traits - and
+FAVORITES, between users and pets. These three are the only composite
+primary keys in the entire schema.
+
+--- SECOND NORMAL FORM ---
+
+Second normal form only applies where there is a composite key - so it
+applies to exactly those three tables.
+
+And they pass it in the simplest possible way: they have no non-key columns
+at all. PET_TRAITS is exactly (pet_id, trait_id). There is nothing in them
+that could depend on half a key.
+
+The label and the slug of a trait live once, on the TRAITS table.
+So renaming "good with kids" is one UPDATE of one row - not an update of
+every pet that has it. That is the whole point of the normal form.
+
+--- THIRD NORMAL FORM ---
+
+Third normal form says no column depends on another non-key column.
+
+A shelter's city belongs to SHELTERS - it is not repeated on every pet
+housed there. A vaccine's name belongs to VACCINE_TYPES - it is not retyped
+on every dose. A question's text belongs to QUIZ_QUESTIONS - it is not
+copied into every answer.
+
+Each fact is written in exactly one place, and every other table reaches
+it by key.
+
+--- WHERE WE BROKE THE RULE, ON PURPOSE ---
+
+I want to be honest about five places where we do store derivable data,
+because a design that claims to be perfectly normalised while the DDL says
+otherwise is not a design anyone can check.
+
+  1. ADOPTION_APPLICATIONS copies the applicant's name, email, phone and
+     address from USERS. That is not redundancy - it is a snapshot. The
+     application must still say where the applicant lived when they
+     applied, even after they move house.
+
+  2. ADOPTIONS.SHELTER_ID is reachable through the pet today. But a pet can
+     be returned and re-listed at another shelter. The completed adoption
+     has to keep naming the shelter that actually handed the animal over.
+
+  3. QUIZ_ATTEMPTS stores SCORE, MAX_SCORE and PASSED, which could be
+     recomputed from the answers. We store them because the scoring weights
+     on QUIZ_OPTIONS can be edited later, and a past attempt must not
+     silently change its result.
+
+  4. PETS.VIEW_COUNT is a counter. Deriving it would mean keeping one row
+     per page view - far more storage for a number nobody audits.
+
+  5. PET_PHOTOS.COVER_FLAG and ADOPTION_APPLICATIONS.PENDING_FLAG are
+     generated columns. MySQL has no partial unique index, so the flag is
+     NULL except on the row that must be unique. That lets UNIQUE enforce
+     "at most one cover photo per pet" and "at most one open application
+     per person per pet". They are constraints wearing the costume of a
+     column.
+
+Every one of those is a deliberate trade, and each one buys something
+specific.
+
+
+===============================================================================
+CLOSING                                                  (about 20 seconds)
+===============================================================================
+
+So, to summarise.
+
+Twenty-seven tables. Two hubs - users and pets. Five functional areas.
+
+Three many-to-many relationships, all resolved with junction tables.
+One true one-to-one, enforced by a UNIQUE constraint.
+Third normal form throughout, with five documented exceptions.
+
+The rules of this system are in the schema, not only in the application
+code - so the database refuses bad data even if our code forgets to.
+
+Thank you. I am happy to take questions.
+
+
+===============================================================================
+LIKELY QUESTIONS - quick answers
+===============================================================================
+
+Q: Why one USERS table instead of separate adopter and staff tables?
+A: They share almost every attribute and all of the login logic. One table
+   with a ROLE column, plus a CHECK constraint tying SHELTER_ID to STAFF,
+   gives us the separation without the duplication.
+
+Q: Why keep applications and adoptions apart?
+A: An application is a request that may be declined. An adoption is a
+   completed fact. Merging them gives a table where many rows describe
+   something that never happened.
+
+Q: Is the schema fully in 3NF?
+A: Yes, apart from five documented cases, which are on page 7. Four are
+   historical snapshots or counters, and one is a MySQL workaround for the
+   lack of a partial unique index.
+
+Q: What are the generated flag columns for?
+A: They enforce "at most one" rules. The flag is NULL on every row except
+   the one that must be unique, so a normal UNIQUE constraint does the job
+   a partial index would do in PostgreSQL.
+
+Q: How is the reminder email prevented from going out twice?
+A: HEALTH_REMINDERS_SENT has UNIQUE(vaccination_id, reminder_kind). The
+   second attempt to insert the same reminder fails at the database.

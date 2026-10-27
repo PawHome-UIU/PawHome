@@ -1,0 +1,164 @@
+===============================================================================
+PAWHOME - PROJECT PROPOSAL
+Presentation speech for slides 1 to 8
+CSE 3522 - Database Management Systems Laboratory
+===============================================================================
+
+  About 470 words. Roughly 3 minutes at a calm speaking pace.
+  Short sentences, simple words. Nothing hard to say out loud.
+  Text in (brackets) is timing. Do not read it.
+
+
+-------------------------------------------------------------------------------
+SLIDE 1 - TITLE                                                        (10 sec)
+-------------------------------------------------------------------------------
+
+Good morning.
+
+We are presenting PawHome.
+
+It is a pet adoption and boarding management system.
+
+This is our project proposal.
+
+
+-------------------------------------------------------------------------------
+SLIDE 2 - ELEVATOR PITCH                                               (35 sec)
+-------------------------------------------------------------------------------
+
+Here is the problem in one line.
+
+Animal shelters still run on paper. And adopters still choose a pet by
+looking at a photo. So many pets come back.
+
+PawHome puts both sides on one website.
+
+A shelter manages its animals, its boarding rooms and its health records
+in one place.
+
+An adopter answers a short quiz about their daily life. The system then
+matches them to the right pet.
+
+They can apply, book boarding, and get vaccination reminders - all on the
+same site.
+
+
+-------------------------------------------------------------------------------
+SLIDE 3 - THE TEAM                                                     (32 sec)
+-------------------------------------------------------------------------------
+
+We are a team of two, and we took one journey each.
+
+I take "finding a home" - the catalogue, the adopter and staff screens,
+accounts and login, applications and adoptions. That is eleven tables.
+
+My teammate takes "looking after a pet" - the quiz, boarding, daily care,
+vaccinations and reports. That is sixteen tables.
+
+So we did not split it as one person on the database and one on the
+features. Each of us builds the screens, the API and the tables for our
+own part.
+
+The course asks for four to five members. We are two, so we would like
+your approval on this.
+
+
+-------------------------------------------------------------------------------
+SLIDE 4 - TYPE OF PROJECT                                              (18 sec)
+-------------------------------------------------------------------------------
+
+PawHome is a web application.
+
+It runs in any browser, so there is nothing to install.
+
+It has three types of users.
+
+And behind it there is one MySQL database - twenty-seven tables and
+fifty-three relationships.
+
+
+-------------------------------------------------------------------------------
+SLIDE 5 - OBJECTIVES                                                   (28 sec)
+-------------------------------------------------------------------------------
+
+We have four objectives.
+
+First, give a shelter one place to manage everything.
+
+Second, match adopters by lifestyle, not by looks.
+
+Third, keep health records and send vaccination reminders automatically.
+
+And fourth - put the rules inside the database itself. So even if our code
+makes a mistake, the database still refuses bad data.
+
+
+-------------------------------------------------------------------------------
+SLIDE 6 - PROBLEM STATEMENT                                            (27 sec)
+-------------------------------------------------------------------------------
+
+These are the four problems we found.
+
+Shelter records live on paper, so nothing can be searched.
+
+Adopters choose by photo, then the pet does not fit their home, and it is
+returned.
+
+Boarding is booked by phone, so there is no record of the daily care.
+
+And vaccination dates are written on a card, so they get missed.
+
+
+-------------------------------------------------------------------------------
+SLIDE 7 - DELIVERABLES                                                 (20 sec)
+-------------------------------------------------------------------------------
+
+We will deliver six things.
+
+A public catalogue anyone can browse.
+
+The matching quiz.
+
+Three portals - one for adopters, one for shelter staff, one for admin.
+
+And the MySQL database, with its migrations and sample data.
+
+
+-------------------------------------------------------------------------------
+SLIDE 8 - METHODOLOGY                                                  (28 sec)
+-------------------------------------------------------------------------------
+
+We are following Agile, in three increments.
+
+First we built every screen, so we could agree on the design before
+locking the data model.
+
+Second, the database and the login system.
+
+Third, the features on top.
+
+We chose Agile because the schema changed as soon as we saw real screens.
+It was cheaper to find that out in week two than in week ten.
+
+
+===============================================================================
+DELIVERY NOTES
+===============================================================================
+
+  Slide 2 - Stand still and do not click. This is the part they remember.
+
+  Slide 3 - Two things here. First, make the split clear: it is one
+            journey each, not one person on the database and one on the
+            features. Both of us own tables. Second, say the team-size
+            line yourself. Do not wait to be asked. Raising it first
+            sounds like planning. Being asked about it sounds like an
+            oversight.
+
+  Slide 4 - Do not read the numbers twice. Say them once, then move on.
+
+  Slide 8 - The last two lines are the reason we chose Agile. Slow down
+            there; it is the sentence a teacher is most likely to follow
+            up on.
+
+  Everywhere - Pause for one second between slides. It sounds confident,
+               and it gives you time to breathe.

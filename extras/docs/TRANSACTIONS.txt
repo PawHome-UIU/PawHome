@@ -1,0 +1,518 @@
+====================================================================================================
+ PAWHOME - TRANSACTIONS
+ @Transactional across the backend, and the locking
+====================================================================================================
+
+ Course : CSE 3522 - Database Management Systems Laboratory, UIU
+ Source : generated from the project source. Do not hand-edit.
+
+
+ WHAT @Transactional ACTUALLY DOES
+
+ Spring does not implement transactions. MySQL does. @Transactional is an
+ instruction to Spring to drive MySQL's own transaction commands around the
+ method:
+
+     BEGIN                         <- Spring, on entering the method
+       ... your SQL ...
+     COMMIT                        <- Spring, if the method returns normally
+     ROLLBACK                      <- Spring, if it throws a RuntimeException
+
+ The mechanism is a PROXY. At startup Spring wraps every @Transactional bean
+ in a generated subclass. A call from outside the class goes through the
+ proxy, which opens the transaction, calls the real method, and commits or
+ rolls back. All the SQL inside runs on ONE connection, so InnoDB sees it as
+ one unit of work.
+
+ THREE CONSEQUENCES WORTH KNOWING:
+
+ 1. SELF-CALLS DO NOT START A TRANSACTION. If methodA() calls this.methodB()
+    and only methodB is @Transactional, the annotation does nothing -- the
+    call never leaves the object, so it never passes through the proxy.
+
+ 2. ONLY RUNTIME EXCEPTIONS ROLL BACK by default. A checked exception commits
+    unless you write @Transactional(rollbackFor = ...). This project throws
+    ResponseStatusException, which is a RuntimeException, so every refusal in
+    a service rolls the transaction back.
+
+ 3. readOnly = true is a HINT, and a useful one. Hibernate skips dirty-checking
+    (it does not snapshot entities to compare at flush), and the JDBC driver
+    can tell MySQL the transaction will not write.
+
+ ISOLATION: not set anywhere in this project, so every transaction runs at
+ MySQL's InnoDB default, REPEATABLE READ.
+
+====================================================================================================
+ COUNTS
+====================================================================================================
+
+   @Transactional on methods         149
+     read-only                        62
+     read-write                       87
+   @Lock(PESSIMISTIC_WRITE)            6   -> becomes SELECT ... FOR UPDATE
+
+   THE FIVE LOCKS NOW GUARD SIX RULES. DaycareService.checkIn reuses
+   BoardingRequestRepository.lockOverlappingForSuite rather than declaring
+   another: "who is holding this room" is the same question the boarding
+   board already asks, and two methods asking it two ways is how the two
+   answers start to differ.
+
+   THE FIFTH IS V16's: ShelterRepository.lockById. It is the odd one, because
+   NOTHING WRITES TO THE ROW IT LOCKS. It is not protecting a write to
+   shelters -- it is protecting a READ of two other tables from being made
+   twice at once. BoardingService.accept asks "is this shelter already at its
+   licensed capacity" and then, if not, writes a stay that changes the
+   answer. Two staff members accepting the last place both read "forty-nine
+   of fifty" without it. The shelters row is the natural thing to serialise
+   on: every such decision has it in common, it certainly exists, and no
+   screen-drawing read takes it.
+
+====================================================================================================
+ THE MULTI-WRITE TRANSACTIONS -- these are the ones to demonstrate
+====================================================================================================
+
+ A transaction only earns its name when it does more than one write.
+ Sorted by how many writes happen inside one commit boundary.
+
+   13 writes   pet/PetService.java :: create()
+    4 writes   application/ApplicationService.java :: approve()
+    4 writes   boarding/BoardingService.java :: complete()        <- V13, V15
+    2 writes   user/MeService.java :: setAvatar()
+    2 writes   shelter/ShelterService.java :: setLogo()
+    2 writes   report/ReportService.java :: delete()
+    2 writes   quiz/QuizTakingService.java :: submit()
+    2 writes   health/VaccinationService.java :: setCertificate()
+    2 writes   health/VaccinationService.java :: delete()
+    2 writes   care/CareService.java :: logCare()
+    2 writes   boarding/BoardingService.java :: request()
+    2 writes   boarding/BoardingService.java :: complete()
+    2 writes   boarding/BoardingService.java :: checkIn()
+
+
+ ---------------------------------------------------------------------------
+ ApplicationService.approve()  -- the clearest one to show a marker
+ ---------------------------------------------------------------------------
+ Approving an adoption application performs, inside ONE transaction:
+
+     1. UPDATE adoption_applications  status -> APPROVED, reviewer, timestamp
+     2. INSERT adoptions              the permanent record of the placement
+     3. UPDATE pets                   status -> ADOPTED, owner_id -> applicant
+     4. UPDATE adoption_applications  close every RIVAL application for the pet
+        INSERT notifications          tell the applicant and each rival
+
+ If any step fails, all of them are undone. Without the transaction a mid-way
+ failure leaves a pet marked ADOPTED with no adoption record -- an animal the
+ database says was rehomed to nobody.
+
+ It is also protected by constraints that make the half-state unrepresentable:
+ ck_pets_owner_when_placed refuses status=ADOPTED with a NULL owner_id, and
+ uq_adoption_application refuses a second adoption for the same application.
+
+ THE THREE UPDATES ARE WRITTEN OUT, NOT GENERATED. They live in
+ ApplicationRepository and PetRepository as @Modifying @Query. Verbatim:
+
+     -- 1 of 4  ApplicationRepository.markApproved
+     UPDATE adoption_applications
+        SET status      = 'APPROVED',
+            reviewed_by = :reviewerId,
+            reviewed_at = :decidedAt
+      WHERE id     = :id
+        AND status = 'PENDING';
+
+     -- 3 of 4  PetRepository.markAdopted
+     UPDATE pets
+        SET status   = 'ADOPTED',
+            owner_id = :ownerId
+      WHERE id       = :petId
+        AND status  IN ('AVAILABLE', 'PENDING');
+
+     -- 4 of 4  ApplicationRepository.closeRivalApplications
+     UPDATE adoption_applications
+        SET status              = 'REJECTED',
+            reviewed_by         = :reviewerId,
+            reviewed_at         = :decidedAt,
+            decline_reason_code = 'PET_ALREADY_MATCHED',
+            decline_message     = :message
+      WHERE pet_id = :petId
+        AND id    <> :keepId
+        AND status = 'PENDING';
+
+ THREE THINGS THAT BUYS, beyond being readable:
+
+ 1. STEP 4 IS ONE STATEMENT. Done through entities it was a loop -- load the
+    rivals, set five fields on each, one UPDATE per row. Five rival applicants
+    meant five statements and five round trips. Now the database does it in
+    one pass however many rows match.
+
+ 2. EACH UPDATE IS A COMPARE-AND-SET. `AND status = 'PENDING'` is not
+    decoration. Two reviewers with the same queue open both pass the check in
+    Java; exactly one of them then matches a row here. The loser updates
+    nothing, gets back 0, and is told so -- instead of silently overwriting
+    the other reviewer's decision.
+
+ 3. ONLY THE COLUMNS THAT CHANGE ARE NAMED. Letting Hibernate build the UPDATE
+    from a dirty entity rewrote all 18 columns of adoption_applications to
+    change 3 of them.
+
+ WHY STEP 2 IS STILL AN ENTITY save(). It is an INSERT of a brand new row, so
+ there is no "which columns changed" question to answer and nothing is hidden
+ -- the builder IS the statement.
+
+ WHY BOTH pets COLUMNS MOVE IN ONE STATEMENT. ck_pets_owner_when_placed says a
+ pet is ADOPTED if and only if owner_id is set, and a CHECK is evaluated per
+ statement. Setting the status first and the owner second fails on the first
+ of the two. Verified against the running database:
+
+     mysql> UPDATE pets SET status='ADOPTED' WHERE id=@p;
+     ERROR 3819 (HY000): Check constraint 'ck_pets_owner_when_placed' is violated.
+
+ WHAT @Modifying's TWO FLAGS ARE FOR. A @Modifying query goes straight to the
+ database and the persistence context never hears about it:
+
+     flushAutomatically = true   write out anything already dirty FIRST, so a
+                                 pending change cannot land on top of this
+                                 statement.
+     clearAutomatically = true   forget the loaded copies AFTER, so nothing in
+                                 memory still claims the old value and flushes
+                                 it back at commit.
+
+ WHAT IS DELIBERATELY ABSENT FROM ALL THREE: updated_at. The column is declared
+ ON UPDATE CURRENT_TIMESTAMP, so MySQL maintains it itself.
+
+ VERIFIED, not asserted. All four statements were run against the real schema
+ inside one transaction and rolled back:
+
+     s1 markApproved            1 row   (replayed: 0  <- compare-and-set holds)
+     s2 INSERT adoptions        1 row
+     s3 markAdopted             1 row   (replayed: 0)
+     s4 closeRivalApplications  2 rows  <- both rivals in ONE statement
+     after: APPROVED 1, REJECTED 2; pet ADOPTED with owner_id set;
+            pending_flag NULL on all three, so uq_one_open_app is released;
+            ck_apps_decline satisfied -- both rejected rows carry a code and
+            a message.
+
+ ---------------------------------------------------------------------------
+ BoardingService.complete()  -- a stay ends and a bill is written   [V13]
+ ---------------------------------------------------------------------------
+ Checking a pet out performs, inside ONE transaction:
+
+     1. UPDATE pets              back to its resting status (ADOPTED or OWNED)
+     2. UPDATE boarding_requests status -> COMPLETED, picked_up_on stamped
+     3. INSERT billing_slips     the bill, for the nights ACTUALLY stayed
+     4. INSERT billing_slip_items  food, medication, grooming  [V15]
+     5. INSERT boarding_updates    the DEPARTURE note
+        INSERT notifications       the owner is told, twice
+
+ THE EXTRA LINES ARE IN THE SAME TRANSACTION, and they have to be: they need
+ the slip's id, so there is no order in which this is one statement -- but
+ there is also no instant at which a customer could be shown a slip whose
+ lines had not committed. total is stored as base + extras, because a slip is
+ a document: recomputing it from today's lines would let an edit rewrite a
+ bill handed over last week.
+
+ ALL OR NONE, AND THIS ONE IS THE EASIEST TO ARGUE FOR: a slip that commits
+ while the check-out rolls back is a bill for a stay the system says never
+ ended -- and the customer is holding it.
+
+ THE ORDER OF 2 AND 3 IS NOT COSMETIC. picked_up_on is stamped BEFORE the slip
+ is issued, because BillingService reads it off that object to work out how
+ many nights to charge for. Issue first and every stay is billed as though it
+ were collected today by coincidence.
+
+ WHY THE SLIP BILLS picked_up_on AND NOT end_date. end_date is what was
+ BOOKED. Until V13 that was the only date anywhere, so a bill built from it
+ charged five nights to somebody who collected their dog on the third morning.
+ Verified against the real schema:
+
+     booked 2026-09-01 -> 09-06 at 800/night  (quoted 4000)
+     collected 2026-09-04
+     slip: 3 nights x 800.00 = 2400.00
+
+ And the other direction, because ck_boarding_picked_up deliberately has no
+ upper bound: collected 09-08 bills 7 nights, not 5. A pet picked up late is a
+ real thing, and charging for it is the same honesty as not charging for the
+ days it was not here.
+
+ IDEMPOTENT. A double-clicked Complete gets the EXISTING slip back rather than
+ a second one. The read in BillingSlipRepository.findForBoarding makes the
+ normal case pleasant; uq_slip_boarding makes the race safe, because the check
+ and the insert are not atomic with one another. Verified: a second insert for
+ the same boarding_request_id is refused by the key.
+
+
+ ---------------------------------------------------------------------------
+ DaycareService.subscribe()  -- capacity, which no constraint can express  [V13]
+ ---------------------------------------------------------------------------
+ "No more than twenty pets in the morning band" is a rule ABOUT SEVERAL ROWS
+ AT ONCE. A MySQL CHECK sees one row and cannot count its siblings; a UNIQUE
+ index cannot express "at most twenty". So it lives in a transaction:
+
+     SELECT s FROM DaycareSubscription s
+      WHERE s.petId = ? AND s.slot = ? AND s.status = ACTIVE
+      FOR UPDATE                          <- lockPetSlot:       one pet, one band
+     SELECT s FROM DaycareSubscription s
+      WHERE s.shelterId = ? AND s.slot = ? AND s.status = ACTIVE
+      FOR UPDATE                          <- lockSlotAtShelter: the capacity count
+     INSERT daycare_subscriptions ...
+
+ WITHOUT THE LOCK both halves are a photograph. Two owners subscribing in the
+ same instant both read 19, both decide there is room, and the shelter opens
+ on Monday with 21 dogs.
+
+ THE LOCK ORDER IS FIXED -- pet first, shelter second, in every path. Two
+ transactions taking the same two locks in opposite orders deadlock; InnoDB
+ detects it and kills one, so it surfaces as a random 500 under load rather
+ than as corruption, but it is still a bug. One order, written down in the
+ repository.
+
+ RETURNS ROWS, NOT A COUNT. SELECT COUNT(*) ... FOR UPDATE is an aggregate and
+ does not lock the way the caller needs; the service counts the list.
+
+ VERIFIED WITH TWO CONCURRENT SESSIONS against the real schema:
+
+     session A   SELECT ... FOR UPDATE on (shelter 1, MORNING, ACTIVE), held
+     session B   INSERT into the same band
+                 -> BLOCKED for 4.006 seconds, until A's transaction ended
+
+ That is the gap lock doing its job: B could not slip a row into the range A
+ had counted. A plain SELECT would have let both through.
+
+ ---------------------------------------------------------------------------
+ ...AND A SECOND CAPACITY QUESTION daycare_slot_capacity NEVER ASKED    [V16]
+ ---------------------------------------------------------------------------
+ THE HOLE. There were two capacity systems and they did not talk:
+
+   shelters.daycare_slot_capacity   counts SUBSCRIPTIONS. Checked at signup.
+   shelter_suites.capacity          counts ARRIVALS.      Checked at check-in.
+
+ Nothing compared them. An admin types the band number on the shelter form;
+ staff build the rooms on theirs. So a shelter could sell places it had
+ nowhere to put -- with the seeded data, Evergreen Paws sells twenty places in
+ the morning band and its dog rooms hold ten (three kennels at two, plus the
+ four-place quiet room). Twenty dogs subscribe; ten get in.
+
+ WHY NOT RESERVE A SUITE AT SIGNUP, THE WAY BOARDING DOES. Nothing says WHICH
+ room. A suite is picked on the day by a staff member looking at the building,
+ which is the right way round -- reserving one months ahead for a pet that
+ comes every weekday would hold it empty on the days the pet is off sick.
+
+ SO THE GUARANTEE IS PER BAND: never sell more places in a band than the rooms
+ can house for the species holding them. Once that is true, first-come-
+ first-served on rooms at check-in is safe, because there is always a room
+ left for the last arrival.
+
+ IT IS AN EXACT FEASIBILITY TEST, IN TWO PARTS, and the second is the one that
+ is easy to miss. Rooms are DOG-only, CAT-only, OTHER-only, or general
+ (species NULL, takes anything). The obvious check --
+
+     dogs subscribed  <=  dog rooms + general rooms
+
+ -- is necessary and NOT sufficient: it passes for ten dog places, ten cat
+ places, four general, eleven dogs and eleven cats, because each species
+ clears its own bound by borrowing the same four general places. So:
+
+   1. per species:  demand(S)  <=  dedicated(S) + general
+   2. the overflow: SUM over S of MAX(0, demand(S) - dedicated(S))  <=  general
+
+ Everybody who cannot fit in a room of their own species is competing for the
+ same general rooms, so the overflow has to fit too. Together the two are
+ Hall's condition for this shape -- exactly feasible, no packing left to luck.
+
+ INSIDE THE SAME LOCK, taken after the band check and reading the rows
+ lockSlotAtShelter already holds. It is not a constraint and could not be: it
+ counts rows of one table, grouped by a column of a second, against sums over
+ a third.
+
+ BOARDING IS DELIBERATELY NOT SUBTRACTED. A boarder holding a kennel tonight
+ says nothing about a Tuesday in March, and there is no row for a stay nobody
+ has booked. This is the STANDING promise; the day's contention with boarders
+ is settled where it is knowable, by checkIn counting for real under a lock.
+
+ VERIFIED against the real schema:
+     band shows 10 of 20 sold -- plenty of room by the old check
+     an 11th dog                  -> REFUSED by condition 1 (11 > 10 places)
+     dog_only 6, cat_only 2, general 4, 10 dogs + a 3rd cat
+        condition 1 passes for the cat (3 <= 2 + 4)
+        condition 2 refuses: 4 + 1 = 5 pets need the 4 general places
+
+
+ ---------------------------------------------------------------------------
+ MonthlyBillingJob.billTheMonth()  -- and the self-invocation trap    [V13]
+ ---------------------------------------------------------------------------
+ ONE TRANSACTION PER SUBSCRIPTION, NOT ONE FOR THE SWEEP. A single transaction
+ around two thousand subscriptions means one bad row -- a shelter deleted
+ mid-sweep, say -- rolling back everybody else's bill. Each slip stands or
+ falls alone and the log says which failed.
+
+ THE EXPIRY STEP IS ON A DIFFERENT BEAN, AND THAT IS THE POINT. The job first
+ retires subscriptions whose agreed end_date has passed (one UPDATE for the
+ whole sweep) and then bills what is left. That method lives on DaycareService
+ rather than on the job, because of consequence 1 at the top of this file:
+
+     @Transactional works through a PROXY. A call from one method of a bean to
+     another method of the SAME bean never leaves the object, so it never
+     passes through the proxy and the annotation does nothing.
+
+ The job calling its own @Transactional helper would have run a @Modifying
+ query with no transaction at all -- a TransactionRequiredException at 03:00
+ on the first of the month. Crossing a bean boundary is what makes the
+ annotation real.
+
+ SAFE TO RE-RUN BY HAND, which somebody always does after it half-fails.
+ uq_slip_period (subscription_id, period_from) makes a second slip for the
+ same month impossible, and BillingService checks for the existing one first
+ so the re-run is quiet rather than a wall of constraint violations. Verified:
+ two slips for the same subscription and month are refused; two for DIFFERENT
+ months on the same subscription are allowed.
+
+
+ ---------------------------------------------------------------------------
+ DaycareService.checkIn()  -- two rules, one of them impossible  [V15, V16]
+ ---------------------------------------------------------------------------
+ Dropping a pet off writes one row, and two things have to be true first:
+
+   1. ONE VISIT PER PET PER DAY          uq_visit_per_day
+   2. THE ROOM HAS A PLACE FREE          no constraint can say this
+
+ THIS WAS THREE RULES UNTIL V16, AND THE MERGE IS THE INTERESTING PART.
+ V15 had "one animal per room per band" (uq_suite_band) and "the room is not
+ held overnight" as separate rules. They are the same assumption in different
+ clothes -- that a room is a place for ONE animal -- and both are wrong about
+ a cat loft with twenty places in it. V16 replaces them with one arithmetic
+ question: how many animals are in there, and does the room have space for
+ another. A boarder staying the night and a cat in for the morning are two of
+ the twenty, not two reasons to refuse.
+
+ RULE 2 IS THE IMPOSSIBLE ONE, and V16 made it more so. It counts rows in TWO
+ tables -- daycare_attendance for the day pets, boarding_requests over a DATE
+ RANGE for the overnight ones -- against a column in a THIRD,
+ shelter_suites.capacity. A CHECK may not contain a subquery; a UNIQUE key
+ counts to exactly one and no further; MySQL has no EXCLUDE constraint. So
+ check-in takes the SAME pessimistic lock the boarding board uses:
+
+     SELECT b FROM BoardingRequest b
+      WHERE b.suiteId = :suiteId
+        AND b.status IN (ACCEPTED, ACTIVE)
+        AND b.startDate <= :today AND b.endDate >= :today
+      FOR UPDATE
+
+ THE LOCK DOES DOUBLE DUTY: the SIZE of what it returns is the overnight half
+ of the count, and taking it is also how this path serialises against
+ BoardingService.accept, which locks the same rows.
+
+ SAME BAND ONLY, for the daycare half. MORNING, MIDDAY and AFTERNOON do not
+ overlap in time, so a cat that comes in at nine is not in the room at three
+ and is not competing for the place.
+
+ AND checked_out_at IS NULL, which is a real change from the key it replaces.
+ uq_suite_band counted a pet collected at noon for the rest of the band, so a
+ room could not be reused within a band even after it emptied.
+
+ VERIFIED WITH TWO CONCURRENT SESSIONS: the second check-in BLOCKED for 4.008
+ seconds until the first transaction ended. A plain SELECT would have let both
+ staff members take the same last place.
+
+ RULE 1 IS STILL A CONSTRAINT, and still fires:
+     same pet checked in twice today       -> uq_visit_per_day refuses
+     a band disagreeing with the parent    -> fk_attendance_sub refuses
+     same room, same day, SAME band        -> now ALLOWED up to capacity,
+                                              refused by the count above at it
+
+ ---------------------------------------------------------------------------
+ BoardingService.accept()  -- two capacities, two refusals  [V16]
+ ---------------------------------------------------------------------------
+ Accepting a stay is five steps in one transaction, and two of them are
+ capacity questions that no constraint can answer:
+
+   1. lock the pet's overlapping stays        -> double-booked animal
+   2. lock the SHELTER row, count residents + overlapping boarders against
+      shelters.capacity                       -> the building is full
+   3. lock the suite's overlapping stays, compare the COUNT against
+      shelter_suites.capacity                 -> the room is full
+   4. assign the room
+   5. status -> ACCEPTED, which is what makes 1-3 true for the next caller
+
+ STEPS 1-3 ARE WORTHLESS WITHOUT STEP 5 IN THE SAME TRANSACTION. The locks go
+ at commit, so the row that makes the next accept fail has to be written
+ before they do.
+
+ STEP 3 CHANGED SHAPE AT V16 WITHOUT CHANGING ITS QUERY. lockOverlappingForSuite
+ is identical; what changed is that its result is MEASURED rather than tested
+ for emptiness. One dog already in a four-place kennel no longer closes it.
+
+ TWO REFUSALS BECAUSE THEY ARE DIFFERENT PROBLEMS WITH DIFFERENT REMEDIES. A
+ full room means pick another room. A full shelter means this stay cannot
+ happen here at all, and the staff member's next action is to decline with a
+ reason -- which is why nothing new had to be built for it: NO_CAPACITY has
+ been in DeclineReason since V1.
+
+ STEP 2 RUNS EVEN WHEN NO ROOM IS CHOSEN. Accepting without a suite is legal
+ -- the room can be assigned later -- but it still commits the shelter to
+ housing the animal. Checking the licence only inside the "a suite was named"
+ branch would leave the one path that skips the room as the way round it.
+
+ VERIFIED: two sessions taking the shelters row FOR UPDATE, the second blocked
+ 3.599 seconds behind the first; a shelter holding 3 with capacity 3 refuses;
+ Cat Loft A at 3 of 3 refuses while Cat Loft B at 0 of 20 accepts.
+
+ ---------------------------------------------------------------------------
+ PetService.create()  -- the largest
+ ---------------------------------------------------------------------------
+ 13 writes in one commit: the pet row, every uploaded photo, the cover
+ promotion, and the trait junction rows. A partial failure would leave a pet
+ with photos pointing at files that were rolled back, or traits belonging to
+ no pet.
+
+====================================================================================================
+ PESSIMISTIC LOCKING -- SELECT ... FOR UPDATE
+====================================================================================================
+
+   boarding/BoardingRequestRepository.java   :: lockOverlappingForPet()    [PESSIMISTIC_WRITE]
+   boarding/BoardingRequestRepository.java   :: lockOverlappingForSuite()  [PESSIMISTIC_WRITE]
+   shelter/ShelterRepository.java            :: lockById()                 [PESSIMISTIC_WRITE]
+   daycare/DaycareSubscriptionRepository.java :: lockPetSlot()             [PESSIMISTIC_WRITE]
+   daycare/DaycareSubscriptionRepository.java :: lockSlotAtShelter()       [PESSIMISTIC_WRITE]
+
+ WHY A LOCK AND NOT A CONSTRAINT. "No two accepted stays for the same pet on
+ overlapping dates" is a rule ABOUT SEVERAL ROWS AT ONCE. A CHECK constraint
+ in MySQL sees one row, and a UNIQUE index cannot express "ranges must not
+ overlap" -- PostgreSQL has EXCLUDE constraints for exactly this, MySQL has
+ nothing equivalent. So the rule lives in a transaction:
+
+     SELECT ... FROM boarding_requests
+      WHERE pet_id = ? AND status IN ('ACCEPTED','ACTIVE')
+        AND start_date <= ? AND end_date >= ?
+      FOR UPDATE                      <- @Lock(PESSIMISTIC_WRITE) adds this
+
+ FOR UPDATE takes write locks on the rows it reads AND on the gaps between
+ them, so a second transaction asking the same question BLOCKS until the first
+ commits. Without it both would read "no overlap", both would insert, and the
+ same dog would be booked into two rooms on the same night.
+
+ This was verified with two concurrent MySQL sessions: the second SELECT
+ blocked until the first COMMIT, then saw the newly accepted booking.
+
+====================================================================================================
+ EVERY FILE CONTAINING @Transactional
+====================================================================================================
+
+    20   pet/PetService.java
+    16   shelter/ShelterService.java
+    12   boarding/BoardingService.java
+    11   care/CareService.java
+     8   admin/AdminUserService.java
+     8   quiz/QuizService.java
+     8   application/ApplicationService.java
+     7   health/VaccinationService.java
+     4   token/TokenService.java
+     4   auth/VerificationService.java
+     4   quiz/QuizTakingService.java
+     4   user/MeService.java
+     4   report/ReportService.java
+     3   notification/NotificationService.java
+     3   admin/InviteService.java
+     3   pet/FavoriteService.java
+     2   auth/AuthService.java
+     1   care/CareDueJob.java
+     1   mail/HealthReminderJob.java
+     1   analytics/AnalyticsService.java

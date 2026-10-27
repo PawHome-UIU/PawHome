@@ -1,0 +1,293 @@
+================================================================================
+PAWHOME  --  TEAMMATE 3
+SCOPE:  Admin console + Public marketing site + site chrome
+BRANCH: feature/admin-public
+SIZE:   30 files, ~3,116 lines  (team average 3,042)
+================================================================================
+
+You own the two ends of the product: the public site a stranger lands on, and
+the admin console that runs the whole platform (shelters, users, analytics,
+reports, the eligibility quiz bank).
+
+You also own the site chrome -- nav, footer, logo, layouts -- which is what
+makes every page look like one product instead of three.
+
+
+--------------------------------------------------------------------------------
+1.  FILES YOU OWN  (only you edit these)
+--------------------------------------------------------------------------------
+
+  src/pages/admin/              6 files, 1072 lines
+      AdminDashboard.jsx
+      SheltersPage.jsx
+      UsersPage.jsx
+      AnalyticsPage.jsx
+      ReportsPage.jsx
+      QuizQuestionsPage.jsx
+
+  src/components/admin/         7 files, 784 lines
+      AdminLayout.jsx
+      DataTable.jsx
+      StatTile.jsx
+      AddShelterModal.jsx
+      InviteStaffModal.jsx
+      AddQuestionModal.jsx
+      GenerateReportModal.jsx
+
+  src/pages/public/             5 files, 690 lines   (ONLY these five)
+      LandingPage.jsx
+      AboutPage.jsx
+      FeaturesPage.jsx
+      ServicesPage.jsx
+      NotFoundPage.jsx
+      -> BrowsePetsPage.jsx and GuestPetDetailPage.jsx belong to Teammate 1.
+
+  src/components/layout/        5 files, 255 lines
+      PublicLayout.jsx
+      PublicNav.jsx
+      PublicFooter.jsx
+      AuthLayout.jsx          <- Teammate 1's auth pages import this
+      ScrollToTop.jsx
+
+  src/components/brand/         2 files, 47 lines
+      Logo.jsx
+      PawIcon.jsx
+
+  src/components/sections/      3 files, 86 lines
+      SectionHeading.jsx
+      FeatureRow.jsx
+      CtaBand.jsx
+
+  src/data/admin.js             1 file, 117 lines
+  src/lib/chartTheme.js         1 file, 65 lines
+      -> chart colours for AnalyticsPage. Keep it aligned with the `pw` palette.
+
+
+--------------------------------------------------------------------------------
+2.  FILES YOU MUST NOT EDIT
+--------------------------------------------------------------------------------
+
+  src/components/ui/*           Teammate 2 owns the design system.
+                                Need a new Button variant or a DataTable
+                                primitive? ASK THEM. Do not fork it.
+  src/pages/adopter/*           Teammate 1
+  src/components/adopter/*      Teammate 1
+  src/components/pets/*         Teammate 1
+  src/pages/auth/*              Teammate 1
+  src/pages/staff/*             Teammate 2
+  src/components/staff/*        Teammate 2
+  src/components/portal/*       Teammate 2
+  src/pages/SettingsPage.jsx    Teammate 2
+  src/data/adopter.js, pets.js  Teammate 1
+  src/data/staff.js             Teammate 2
+
+  IMPORTING from another person's folder is always fine.
+  EDITING their file is what causes merge conflicts. Ask instead.
+
+
+--------------------------------------------------------------------------------
+3.  YOU OWN THE SITE CHROME  --  extra responsibility
+--------------------------------------------------------------------------------
+
+Teammate 1's auth pages import AuthLayout from your folder, and every public
+page sits inside your PublicLayout. So:
+
+  * BUILD LAYOUT + BRAND EARLY. AuthLayout blocks Teammate 1's login page.
+    Push PublicLayout, AuthLayout and Logo in the first day or two.
+
+  * DO NOT RENAME a layout's props or its children contract without telling
+    the group. It silently breaks pages you cannot see.
+
+  * YOU SET THE VISUAL TONE. The landing page is what a marker looks at first.
+    Spacing, type scale and colour discipline here define the whole product.
+
+  * NAVIGATION IS YOURS. When Teammate 1 or 2 adds a page that needs a nav
+    link, they ask you -- you add it to PublicNav. That keeps one person
+    responsible for the information architecture.
+
+
+--------------------------------------------------------------------------------
+4.  ONE-TIME SETUP
+--------------------------------------------------------------------------------
+
+Prerequisite: Faiyaj must have pushed the repo to GitHub first.
+
+  git --version
+  node -v            # need 20+
+  docker --version
+
+Clone and branch:
+
+  # macOS / Linux / Git Bash
+  cd ~/Documents
+  git clone https://github.com/FaiyajJarif/Pawhome.git
+  cd Pawhome
+
+  # Windows Command Prompt
+  cd %USERPROFILE%\Documents
+  git clone https://github.com/FaiyajJarif/Pawhome.git
+  cd Pawhome
+
+Then, identically on every OS:
+
+  git config user.name  "Your Name"
+  git config user.email "your@email.com"
+
+  git checkout -b feature/admin-public
+  git push -u origin feature/admin-public
+
+Install and run:
+
+  cd frontend
+  npm install
+  npm run dev                    -> http://localhost:5174
+
+  # in another tab, for the API:
+  cd ..\docker    (Windows)  |  cd ../docker    (macOS)
+  docker compose up -d
+  cd ..\backend   (Windows)  |  cd ../backend   (macOS)
+  mvnw.cmd spring-boot:run   (Windows)  |  ./mvnw spring-boot:run   (macOS)
+
+
+--------------------------------------------------------------------------------
+5.  DAILY WORKFLOW  --  do this every single day
+--------------------------------------------------------------------------------
+
+START of a session -- pull main into your branch BEFORE you write anything:
+
+  git checkout feature/admin-public
+  git fetch origin
+  git merge origin/main
+
+  (Doing this daily means you resolve 2 small conflicts instead of 40 large
+   ones at the end. This is the single most important habit in this list.)
+
+WHILE WORKING -- commit small and often:
+
+  git add src/pages/admin/SheltersPage.jsx
+  git commit -m "admin: shelter table filtering + empty state"
+
+  Commit message prefix is your scope, so `git log` is readable:
+      admin: ...      public: ...      layout: ...
+
+END of a session -- always push, even if unfinished:
+
+  git push
+
+
+--------------------------------------------------------------------------------
+6.  THE ROUTING FILE  --  the ONE place all three of you collide
+--------------------------------------------------------------------------------
+
+src/App.jsx is shared. Everyone adds routes to it, so it WILL conflict.
+
+Rule: only ever touch YOUR marked block. Never reformat or reorder the file.
+
+  {/* ---- TEAMMATE 3: public site + admin console ---- */}
+  <Route element={<PublicLayout />}>
+    <Route path="/"         element={<LandingPage />} />
+    <Route path="/about"    element={<AboutPage />} />
+    ...your routes only...
+  </Route>
+  <Route path="/admin" element={<AdminLayout />}>
+    ...
+  </Route>
+  {/* ---- END TEAMMATE 3 ---- */}
+
+NOTE: the catch-all 404 route must stay LAST in the whole file, after
+everyone's blocks:
+
+  <Route path="*" element={<NotFoundPage />} />
+
+If git reports a conflict in App.jsx, KEEP BOTH SIDES:
+
+  git merge origin/main
+  # open src/App.jsx, delete the <<<<<<< ======= >>>>>>> lines,
+  # keep BOTH your routes and theirs, and re-check that "*" is last
+  git add src/App.jsx
+  git commit
+  npm run dev        # confirm the app still loads before pushing
+  git push
+
+
+--------------------------------------------------------------------------------
+7.  SHARED FILES  --  ask before touching
+--------------------------------------------------------------------------------
+
+  src/App.jsx                 your marked block only (see section 6)
+  src/main.jsx                Faiyaj
+  src/index.css               Faiyaj
+  src/api/client.js           Faiyaj
+  src/lib/config.js           Faiyaj
+  src/lib/apiError.js         Faiyaj
+  tailwind.config.js          Faiyaj -- you will want palette changes for the
+                              landing page. Ask him; do not edit it yourself,
+                              or the palette forks three ways.
+  package.json                tell the group BEFORE adding a dependency.
+                              (recharts is already installed for Analytics.)
+
+
+--------------------------------------------------------------------------------
+8.  WHEN YOUR PART IS DONE  --  open a Pull Request
+--------------------------------------------------------------------------------
+
+  git fetch origin
+  git merge origin/main        # resolve anything, run the app, confirm it works
+  npm run build                # MUST succeed. A broken build blocks everyone.
+  git push
+
+Then on github.com/FaiyajJarif/Pawhome:
+  "Compare & pull request"  ->  base: main   compare: feature/admin-public
+  Title:  Admin console, public site and shared layouts
+  Body:   list the pages you finished + anything still stubbed
+
+Ask Faiyaj to merge with --no-ff so your work stays one visible commit on main:
+
+  git checkout main
+  git merge --no-ff feature/admin-public
+
+
+--------------------------------------------------------------------------------
+9.  DEFINITION OF DONE  --  tick every box before the PR
+--------------------------------------------------------------------------------
+
+  [ ] every page in section 1 renders without a console error
+  [ ] every page works at 375px wide (phone) as well as desktop
+  [ ] loading, empty AND error states exist -- not just the happy path
+  [ ] admin tables handle 0 rows, 1 row and 500 rows without breaking layout
+  [ ] every chart has an axis label and a legend; colours come from chartTheme
+  [ ] all colours from the `pw` palette -- no hex codes in components
+  [ ] all buttons/inputs/modals use src/components/ui/, none hand-rolled
+  [ ] the "*" 404 route is still LAST in App.jsx after merging
+  [ ] no console.log left behind
+  [ ] npm run build succeeds
+  [ ] merged latest origin/main and the app still runs
+
+
+--------------------------------------------------------------------------------
+10. IF SOMETHING BREAKS
+--------------------------------------------------------------------------------
+
+  "Vite: failed to resolve import"
+        A file you imported was deleted or renamed by someone else.
+        -> git fetch origin && git merge origin/main, then fix the import path.
+
+  Every route suddenly renders the 404 page
+        The "*" catch-all route drifted above the others in a merge.
+        -> move <Route path="*" ...> back to the very bottom of App.jsx.
+
+  "Network Error" / API unreachable in the browser
+        The backend is not running. -> cd backend && ./mvnw spring-boot:run
+        Check the port is 8081 in src/lib/config.js.
+
+  Merge conflict you do not understand
+        git merge --abort           # nothing is lost, you are back where you were
+        Then ask the group before retrying. Never force-push to fix a conflict.
+
+  You committed to main by accident
+        git branch feature/admin-public     # save your work onto your branch
+        git checkout feature/admin-public
+        (then tell Faiyaj -- do NOT push main)
+
+  NEVER RUN:  git push --force        on a shared branch. It deletes other
+                                      people's commits.

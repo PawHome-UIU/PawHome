@@ -1,0 +1,251 @@
+================================================================================
+PAWHOME  --  TEAMMATE 1
+SCOPE:  Adopter experience + Authentication + Public pet discovery
+BRANCH: feature/adopter-auth
+SIZE:   24 files, ~2,927 lines  (team average 3,042)
+================================================================================
+
+You own everything a person sees while LOOKING FOR a pet and while SIGNING IN.
+End to end: browse as a guest -> register -> take the eligibility quiz -> apply
+-> track the application -> manage a boarding stay.
+
+
+--------------------------------------------------------------------------------
+1.  FILES YOU OWN  (only you edit these)
+--------------------------------------------------------------------------------
+
+  src/pages/adopter/            9 files, 1365 lines
+      AdopterDashboard.jsx
+      RecommendationsPage.jsx
+      ShelterPetsPage.jsx
+      PetDetailPage.jsx
+      FavoritesPage.jsx
+      AdoptionApplicationPage.jsx
+      MyApplicationsPage.jsx
+      AdopterBoardingPage.jsx
+      BoardingDetailPage.jsx
+
+  src/components/adopter/       5 files, 473 lines
+      AdopterLayout.jsx
+      EligibilityQuizModal.jsx
+      BoardingQuizModal.jsx
+      MatchCard.jsx
+      MetricTile.jsx
+
+  src/components/pets/          2 files, 82 lines
+      PetCard.jsx
+      StatusBadge.jsx
+      -> shared with the public browse pages, which you also own. Keep the
+         props generic; Teammate 3's marketing pages do not use them.
+
+  src/pages/auth/               4 files, 574 lines
+      LoginPage.jsx
+      RegisterPage.jsx
+      RoleSelectPage.jsx
+      ForgotPasswordPage.jsx
+
+  src/pages/public/             2 files, 280 lines   (ONLY these two)
+      BrowsePetsPage.jsx
+      GuestPetDetailPage.jsx
+      -> the other 5 public pages belong to Teammate 3.
+
+  src/data/                     2 files, 153 lines
+      adopter.js
+      pets.js
+
+
+--------------------------------------------------------------------------------
+2.  FILES YOU MUST NOT EDIT
+--------------------------------------------------------------------------------
+
+  src/components/ui/*           Teammate 2 owns the design system.
+                                Need a new Button variant? ASK THEM. Do not
+                                fork it, and do not restyle it inline.
+  src/components/layout/*       Teammate 3. (You IMPORT AuthLayout from here --
+                                importing is fine, editing is not.)
+  src/components/staff/*        Teammate 2
+  src/components/admin/*        Teammate 3
+  src/pages/staff/*             Teammate 2
+  src/pages/admin/*             Teammate 3
+  src/pages/SettingsPage.jsx    Teammate 2
+  src/data/staff.js             Teammate 2
+  src/data/admin.js             Teammate 3
+
+  IMPORTING from another person's folder is always fine.
+  EDITING their file is what causes merge conflicts. Ask instead.
+
+
+--------------------------------------------------------------------------------
+3.  ONE-TIME SETUP
+--------------------------------------------------------------------------------
+
+Prerequisite: Faiyaj must have pushed the repo to GitHub first.
+
+  git --version
+  node -v            # need 20+
+  docker --version
+
+Clone and branch:
+
+  # macOS / Linux / Git Bash
+  cd ~/Documents
+  git clone https://github.com/FaiyajJarif/Pawhome.git
+  cd Pawhome
+
+  # Windows Command Prompt
+  cd %USERPROFILE%\Documents
+  git clone https://github.com/FaiyajJarif/Pawhome.git
+  cd Pawhome
+
+Then, identically on every OS:
+
+  git config user.name  "Your Name"
+  git config user.email "your@email.com"
+
+  git checkout -b feature/adopter-auth
+  git push -u origin feature/adopter-auth
+
+Install and run:
+
+  cd frontend
+  npm install
+  npm run dev                    -> http://localhost:5174
+
+  # in another tab, for the API:
+  cd ..\docker    (Windows)  |  cd ../docker    (macOS)
+  docker compose up -d
+  cd ..\backend   (Windows)  |  cd ../backend   (macOS)
+  mvnw.cmd spring-boot:run   (Windows)  |  ./mvnw spring-boot:run   (macOS)
+
+
+--------------------------------------------------------------------------------
+4.  DAILY WORKFLOW  --  do this every single day
+--------------------------------------------------------------------------------
+
+START of a session -- pull main into your branch BEFORE you write anything:
+
+  git checkout feature/adopter-auth
+  git fetch origin
+  git merge origin/main
+
+  (Doing this daily means you resolve 2 small conflicts instead of 40 large
+   ones at the end. This is the single most important habit in this list.)
+
+WHILE WORKING -- commit small and often:
+
+  git add src/pages/adopter/FavoritesPage.jsx
+  git commit -m "adopter: empty state for favorites"
+
+  Commit message prefix is your scope, so `git log` is readable:
+      adopter: ...      auth: ...      public: ...
+
+END of a session -- always push, even if unfinished:
+
+  git push
+
+  (Unpushed work exists on exactly one laptop. Push before you close the lid.)
+
+
+--------------------------------------------------------------------------------
+5.  THE ROUTING FILE  --  the ONE place all three of you collide
+--------------------------------------------------------------------------------
+
+src/App.jsx is shared. Everyone adds routes to it, so it WILL conflict.
+
+Rule: only ever touch YOUR marked block. Never reformat or reorder the file.
+
+  {/* ---- TEAMMATE 1: auth + adopter + public pet discovery ---- */}
+  <Route path="/login"    element={<LoginPage />} />
+  <Route path="/register" element={<RegisterPage />} />
+  <Route path="/pets"     element={<BrowsePetsPage />} />
+  ...your routes only...
+  {/* ---- END TEAMMATE 1 ---- */}
+
+If git reports a conflict in App.jsx, it is almost always because two people
+added routes in the same place. KEEP BOTH SIDES:
+
+  git checkout feature/adopter-auth
+  git merge origin/main
+  # open src/App.jsx, delete the <<<<<<< ======= >>>>>>> lines,
+  # keep BOTH your routes and theirs
+  git add src/App.jsx
+  git commit
+  npm run dev        # confirm the app still loads before pushing
+  git push
+
+
+--------------------------------------------------------------------------------
+6.  SHARED FILES  --  ask before touching
+--------------------------------------------------------------------------------
+
+  src/App.jsx                 your marked block only (see section 5)
+  src/main.jsx                Faiyaj
+  src/index.css               Faiyaj
+  src/api/client.js           Faiyaj
+  src/lib/config.js           Faiyaj
+  src/lib/apiError.js         Faiyaj
+  tailwind.config.js          Faiyaj -- new colours go through him, so the
+                              palette does not fork three ways
+  package.json                tell the group BEFORE adding a dependency;
+                              two people adding different libraries for the
+                              same job is the classic team-project mess
+
+
+--------------------------------------------------------------------------------
+7.  WHEN YOUR PART IS DONE  --  open a Pull Request
+--------------------------------------------------------------------------------
+
+  git fetch origin
+  git merge origin/main        # resolve anything, run the app, confirm it works
+  npm run build                # MUST succeed. A broken build blocks everyone.
+  git push
+
+Then on github.com/FaiyajJarif/Pawhome:
+  "Compare & pull request"  ->  base: main   compare: feature/adopter-auth
+  Title:  Adopter experience, authentication and public pet discovery
+  Body:   list the pages you finished + anything still stubbed
+
+Ask Faiyaj to merge with --no-ff so your work stays one visible commit on main:
+
+  git checkout main
+  git merge --no-ff feature/adopter-auth
+
+
+--------------------------------------------------------------------------------
+8.  DEFINITION OF DONE  --  tick every box before the PR
+--------------------------------------------------------------------------------
+
+  [ ] every page in section 1 renders without a console error
+  [ ] every page works at 375px wide (phone) as well as desktop
+  [ ] loading, empty AND error states exist -- not just the happy path
+  [ ] all colours come from the `pw` palette in tailwind.config.js,
+      no hex codes typed into components
+  [ ] all buttons/inputs/modals use src/components/ui/, none hand-rolled
+  [ ] no console.log left behind
+  [ ] npm run build succeeds
+  [ ] merged latest origin/main and the app still runs
+
+
+--------------------------------------------------------------------------------
+9.  IF SOMETHING BREAKS
+--------------------------------------------------------------------------------
+
+  "Vite: failed to resolve import"
+        A file you imported was deleted or renamed by someone else.
+        -> git fetch origin && git merge origin/main, then fix the import path.
+
+  "Network Error" / API unreachable in the browser
+        The backend is not running. -> cd backend && ./mvnw spring-boot:run
+        Check the port is 8081 in src/lib/config.js.
+
+  Merge conflict you do not understand
+        git merge --abort           # nothing is lost, you are back where you were
+        Then ask the group before retrying. Never force-push to fix a conflict.
+
+  You committed to main by accident
+        git branch feature/adopter-auth     # save your work onto your branch
+        git checkout feature/adopter-auth
+        (then tell Faiyaj -- do NOT push main)
+
+  NEVER RUN:  git push --force        on a shared branch. It deletes other
+                                      people's commits.

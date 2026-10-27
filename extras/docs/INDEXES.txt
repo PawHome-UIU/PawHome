@@ -1,0 +1,376 @@
+====================================================================================================
+ PAWHOME - INDEXES
+ Every index, why it exists, and what reads it
+====================================================================================================
+
+ Course : CSE 3522 - Database Management Systems Laboratory, UIU
+ Source : generated from the project source. Do not hand-edit.
+
+ SUMMARY (from the migrations, which are the authority)
+
+   PRIMARY KEY           31   one per table
+   UNIQUE                20   these enforce rules, not just speed
+   secondary indexes     63
+   -------------------------
+   TOTAL declared       114
+   of which COMPOSITE    29   (more than one column)
+
+   V15 ADDED SIX, AND TWO OF THEM ARE THE RULE RATHER THAN THE SPEED:
+
+     uq_suite_band  (suite_id, visit_date, slot)            UNIQUE
+                                                  *** DROPPED AT V16 ***
+         ONE ANIMAL PER ROOM PER BAND. Note what it deliberately ALLOWED: the
+         same room taking a 09:00 pet and a 15:00 pet on the same day, which
+         is the entire reason daycare has bands. Without `slot` in the key a
+         room could take one animal per DAY.
+
+         IT LASTED ONE MIGRATION, AND THE REASON IS WORTH KEEPING. The key is
+         a perfect expression of "at most one", and "at most one" turned out
+         to be the wrong rule: V16 gave shelter_suites a capacity, so Cat Loft
+         A holds twenty cats and this key refused the second one. A UNIQUE key
+         counts to exactly one and no further, so there was no way to widen
+         it -- the rule had to leave the schema entirely. See
+         docs/TRANSACTIONS.txt, DaycareService.checkIn.
+
+         It is also why daycare_attendance carries a COPY of the
+         subscription's slot, and why fk_attendance_sub points at
+         daycare_subscriptions (id, slot) rather than (id) -- the V6 trick,
+         so the copy cannot disagree with its parent. THAT part survives V16:
+         the copy is still what the count filters on.
+
+     uq_visit_per_day (subscription_id, visit_date)         UNIQUE
+         One check-in per pet per day: idempotent against a double click, and
+         it turns "did this pet come today" into a lookup.
+
+     idx_attendance_present (visit_date, checked_out_at)
+         "Who is on site right now" is visit_date = today AND checked_out_at
+         IS NULL -- exactly this, in this order.
+
+     idx_attendance_board (visit_date, suite_id)            the day, room by room
+     idx_slip_items (slip_id, sort_order)                   a bill, in the order typed
+     fk_attendance_sub / fk_attendance_out_by               FK-required
+
+   WHAT IS NOT THERE: an index on daycare_attendance.suite_id alone. It would
+   be redundant -- idx_attendance_suite_band leads with that column, and
+   InnoDB uses a leftmost prefix. (Before V16 the same sentence was true of
+   uq_suite_band, which is exactly why the new index had to be created BEFORE
+   the old one was dropped -- see below.)
+
+   V16 SWAPPED ONE FOR ONE, so the total is unchanged at 114:
+
+     idx_attendance_suite_band (suite_id, visit_date, slot, checked_out_at)
+         THE RULE uq_suite_band USED TO BE, now counted instead of forbidden.
+         DaycareAttendanceRepository.countPresentInSuiteBand reads exactly
+         (suite_id, visit_date, slot) and then filters checked_out_at IS NULL;
+         all four columns are in the key so the count never touches the table.
+
+         THE ORDER OF THE TWO STATEMENTS IN V16 IS FORCED, and this is the
+         kind of thing that only shows up when the migration is actually run.
+         fk_attendance_suite is a foreign key on suite_id, and InnoDB requires
+         an index whose LEADING column is suite_id to support it.
+         uq_suite_band was that index. Drop it first and MySQL refuses with
+         errno 150; create this one first and the FK has somewhere else to
+         live, so the drop succeeds. Verified against MySQL 8.0.46: all
+         sixteen migrations apply clean in order, and the FK is still there
+         afterwards.
+
+   V13 ADDED THIRTEEN OF THESE. Six on daycare_subscriptions and seven on
+   billing_slips, and three of the thirteen are UNIQUE keys doing real work
+   rather than speeding anything up:
+
+     idx_sub_capacity   (shelter_id, slot, status)
+         THE CAPACITY CHECK, in that column order. The rule "no more than
+         twenty pets in the morning band" is about several rows at once, so
+         it cannot be a CHECK -- it lives in a transaction that reads this
+         index under FOR UPDATE. The order matters twice over: it is the
+         leftmost prefix of the predicate, AND it is what keeps the gap lock
+         over just those rows instead of the whole table. Proven: a second
+         session's INSERT into the same band blocked for the 4 seconds the
+         first held the lock.
+
+     idx_sub_billing    (status, start_date)
+         The monthly job's sweep: everything ACTIVE that had started by the
+         end of the month being billed. Exactly this predicate, in order.
+
+     idx_sub_owner      (owner_id, status)
+     idx_sub_pet        (pet_id)
+     fk_sub_attempt     (quiz_attempt_id, quiz_attempt_type)
+         Auto-created by InnoDB for the composite foreign key -- see below.
+
+     uq_slip_boarding   (boarding_request_id)     UNIQUE
+         ONE SLIP PER COMPLETED STAY. This is what makes issuing idempotent:
+         a double-clicked "Complete" collides here instead of billing the
+         customer twice. MySQL lets a UNIQUE key hold many NULLs, so every
+         daycare slip -- which leaves this column NULL -- is unaffected.
+
+     uq_slip_period     (subscription_id, period_from)   UNIQUE
+         ONE SLIP PER SUBSCRIPTION PER MONTH, which is what makes the monthly
+         job safe to re-run by hand after it fails halfway.
+
+     uq_slip_no         (slip_no)                 UNIQUE
+         Belt and braces. The slip number is DERIVED from the thing being
+         billed, so the two keys above already guarantee what this re-checks.
+
+     idx_slip_owner     (owner_id, issued_at)
+     idx_slip_shelter   (shelter_id, issued_at)
+         "My bills, newest first" and the shelter's takings list: filter on
+         one id, sort by date -- which is exactly a two-column index.
+
+   PLUS 3 INDEXES NOBODY WROTE. The live database reports 121, not 114. The
+   difference is InnoDB: a foreign key REQUIRES an index on the child column,
+   and if the migration did not declare a suitable one MySQL silently creates
+   it, named after the constraint. These three are auto-created:
+
+       adoption_applications.fk_apps_attempt
+       boarding_requests.fk_boarding_attempt
+       pets.fk_pets_created_by
+
+   V13 adds two more of the same kind -- daycare_subscriptions.fk_sub_attempt
+   (the composite quiz key again) and billing_slips.fk_slip_issuer -- which is
+   why 105 declared becomes 110 live.
+
+   Worth knowing for two reasons: it explains the count, and it means a
+   foreign key is never unindexed even when it looks that way in the DDL.
+   Verify on your own database with:
+
+       SELECT TABLE_NAME, INDEX_NAME
+         FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA='pawhome' AND INDEX_NAME <> 'PRIMARY'
+        GROUP BY TABLE_NAME, INDEX_NAME;
+
+   THREE DECLARED INDEXES ARE REDUNDANT and could be dropped: idx_apps_attempt,
+   idx_boarding_attempt and idx_pet_photos_pet each duplicate the leftmost
+   column of another index on the same table. Harmless, but each one costs a
+   write on every INSERT.
+
+ WHY COMPOSITE INDEXES MATTER HERE. A composite index is only used when the
+ query filters on a LEFTMOST PREFIX of its columns. Each one below was chosen
+ to match a specific query's WHERE/ORDER BY, not added speculatively:
+
+   idx_boarding_overlap (pet_id, start_date, end_date)
+       reads: the double-booking check in BoardingService.accept(). Filters on
+       pet_id and both dates -- exactly this index, in this order.
+
+   idx_notif_inbox (user_id, read_at, created_at)
+       reads: "my unread notifications, newest first". user_id narrows, read_at
+       filters, created_at is already sorted so no filesort is needed.
+
+   idx_adoptions_shelter_date (shelter_id, adopted_on)
+       reads: "Adoptions by Shelter" in the analytics module, and the
+       ADOPTION_SUMMARY report -- both filter by shelter and a date range.
+
+   uq_one_open_app (pet_id, applicant_id, pending_flag)
+       NOT for speed. MySQL has no partial unique index, so pending_flag is a
+       generated column that is 1 when the row is PENDING and NULL otherwise.
+       NULLs do not collide in a UNIQUE index, so this permits many decided
+       applications per person per pet, and at most ONE open one.
+
+   uq_pet_cover (pet_id, cover_flag)
+       Same trick: at most one cover photo per pet, unlimited non-cover photos.
+
+
+----------------------------------------------------------------------------------------------------
+ adoption_applications
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_one_open_app                (applicant_id, pet_id, pending_flag) *COMPOSITE*
+   INDEX        idx_apps_pet                   (pet_id)
+   INDEX        idx_apps_reviewer              (reviewed_by)
+   INDEX        idx_apps_attempt               (eligibility_attempt_id)
+   INDEX        idx_apps_queue                 (status, submitted_at) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ adoptions
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_adoption_application        (application_id)
+   INDEX        idx_adoptions_pet              (pet_id)
+   INDEX        idx_adoptions_adopter          (adopter_id)
+   INDEX        idx_adoptions_shelter_date     (shelter_id, adopted_on) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ audit_log
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_audit_recent               (created_at)
+   INDEX        idx_audit_entity               (entity_type, entity_id) *COMPOSITE*
+   INDEX        idx_audit_actor                (actor_id)
+
+----------------------------------------------------------------------------------------------------
+ boarding_instructions
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_instructions_boarding      (boarding_id)
+
+----------------------------------------------------------------------------------------------------
+ boarding_requests
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_boarding_overlap           (pet_id, start_date, end_date) *COMPOSITE*
+   INDEX        idx_boarding_shelter_status    (shelter_id, status) *COMPOSITE*
+   INDEX        idx_boarding_owner             (owner_id)
+   INDEX        idx_boarding_suite             (suite_id)
+   INDEX        idx_boarding_attempt           (quiz_attempt_id)
+   INDEX        idx_boarding_reviewer          (reviewed_by)
+
+----------------------------------------------------------------------------------------------------
+ boarding_updates
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_updates_boarding           (boarding_id, posted_at) *COMPOSITE*
+   INDEX        idx_updates_author             (posted_by)
+
+----------------------------------------------------------------------------------------------------
+ care_logs
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_logs_pet_time              (pet_id, logged_at) *COMPOSITE*
+   INDEX        idx_logs_boarding              (boarding_id)
+   INDEX        idx_logs_task                  (task_id)
+   INDEX        idx_logs_author                (logged_by)
+
+----------------------------------------------------------------------------------------------------
+ care_tasks
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_care_due                   (status, due_at) *COMPOSITE*
+   INDEX        idx_care_pet                   (pet_id)
+   INDEX        idx_care_boarding              (boarding_id)
+   INDEX        idx_care_assignee              (assigned_to)
+   INDEX        idx_care_completer             (completed_by)
+
+----------------------------------------------------------------------------------------------------
+ favorites
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (user_id, pet_id) *COMPOSITE*
+   INDEX        idx_favorites_pet              (pet_id)
+
+----------------------------------------------------------------------------------------------------
+ health_reminders_sent
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_reminder_once               (vaccination_id, reminder_kind) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ notifications
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_notif_inbox                (user_id, read_at, created_at) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ option_traits
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (option_id, trait_id) *COMPOSITE*
+   INDEX        idx_option_traits_trait        (trait_id)
+
+----------------------------------------------------------------------------------------------------
+ pet_photos
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_pet_cover                   (pet_id, cover_flag) *COMPOSITE*
+   INDEX        idx_pet_photos_pet             (pet_id)
+   INDEX        idx_pet_photos_uploader        (uploaded_by)
+
+----------------------------------------------------------------------------------------------------
+ pet_traits
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (pet_id, trait_id) *COMPOSITE*
+   INDEX        idx_pet_traits_trait           (trait_id)
+
+----------------------------------------------------------------------------------------------------
+ pets
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_pets_shelter               (shelter_id)
+   INDEX        idx_pets_owner                 (owner_id)
+   INDEX        idx_pets_breed                 (breed)
+   INDEX        idx_pets_browse                (status, species, size) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ quiz_answers
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_answer                      (attempt_id, question_id, option_id) *COMPOSITE*
+   INDEX        idx_answers_question           (question_id)
+   INDEX        idx_answers_option             (option_id)
+
+----------------------------------------------------------------------------------------------------
+ quiz_attempts
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_attempts_user_type         (user_id, quiz_type, id) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ quiz_options
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_option_order                (question_id, display_order) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ quiz_questions
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_questions_bank             (quiz_type, status, display_order) *COMPOSITE*
+   INDEX        idx_questions_author           (created_by)
+
+----------------------------------------------------------------------------------------------------
+ reports
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_reports_recent             (generated_at)
+   INDEX        idx_reports_shelter            (shelter_id)
+   INDEX        idx_reports_author             (generated_by)
+
+----------------------------------------------------------------------------------------------------
+ shelter_suites
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_suite_per_shelter           (shelter_id, name) *COMPOSITE*
+
+----------------------------------------------------------------------------------------------------
+ shelters
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_shelters_name               (name)
+
+----------------------------------------------------------------------------------------------------
+ traits
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_traits_label                (label)
+   UNIQUE       uq_traits_slug                 (slug)
+
+----------------------------------------------------------------------------------------------------
+ user_tokens
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_user_tokens_hash            (token_hash)
+   INDEX        idx_user_tokens_user           (user_id, token_type) *COMPOSITE*
+   INDEX        idx_user_tokens_expiry         (expires_at)
+
+----------------------------------------------------------------------------------------------------
+ users
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_users_email                 (email)
+   INDEX        idx_users_shelter              (shelter_id)
+
+----------------------------------------------------------------------------------------------------
+ vaccinations
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   INDEX        idx_vacc_pet                   (pet_id)
+   INDEX        idx_vacc_due                   (status, next_due_on) *COMPOSITE*
+   INDEX        idx_vacc_type                  (vaccine_type_id)
+   INDEX        idx_vacc_recorder              (recorded_by)
+
+----------------------------------------------------------------------------------------------------
+ vaccine_types
+----------------------------------------------------------------------------------------------------
+   PRIMARY KEY  -                              (id)
+   UNIQUE       uq_vaccine_name                (name)
+
+----------------------------------------------------------------------------------------------------
+ quiz_attempts  (added by a later migration)
+----------------------------------------------------------------------------------------------------
+   UNIQUE       uq_attempt_id_type             (id, quiz_type) *COMPOSITE*

@@ -1,0 +1,1072 @@
+====================================================================================================
+ PAWHOME - RELATIONAL SCHEMA (MySQL)
+ Pet Adoption & Boarding Management System
+====================================================================================================
+
+ Course      : CSE 3522 - Database Management Systems Laboratory, UIU
+ Engine      : MySQL 8.4  |  ENGINE=InnoDB  |  utf8mb4 / utf8mb4_0900_ai_ci
+ Derived from: PawHome Figma design (30 screens) + stakeholder brief
+ Generated   : 2026-08-30
+
+ 32 tables  |  2 views  |  8 modules  |  69 foreign keys
+ 313 columns  |  39 CHECK constraints  |  19 UNIQUE keys  |  124 indexes
+
+ NOTE - this document describes V1. Several migrations have run since it was
+ generated; the counts above are current, the table bodies below are not:
+
+   V4  adds users.email_verified, and the tables user_tokens and
+       health_reminders_sent (25 -> 27 tables, 51 -> 53 foreign keys).
+   V5  widens user_tokens.token_hash from CHAR(64) to VARCHAR(64), so it
+       matches what the JPA entity declares.
+   V6  makes the quiz type part of the relationship. quiz_attempts gains
+       UNIQUE(id, quiz_type); adoption_applications and boarding_requests
+       each gain a constant type column and reference the pair, so the
+       wrong kind of attempt can no longer be attached. quiz_attempts
+       .score / .max_score / .passed become nullable, with a CHECK that
+       ties them to the type: scored for ELIGIBILITY and BOARDING, null
+       for PERSONALITY.
+
+   V9  makes pets.shelter_id nullable and adds the OWNED status, so a pet
+       that has never been in a shelter can be boarded by the household
+       that has always owned it.
+   V15 adds the two facts nothing recorded: daycare_attendance (who is in
+       the building today, and in which room) and billing_slip_items (what a
+       bill says besides the nights). 29 -> 31 tables.
+
+       daycare_attendance is why the staff "Pets in Care" tile was wrong: it
+       rendered pet_count, which is the shelter's BOOKS, under a label
+       everyone read as the shelter's BUILDING. A boarded pet belongs to a
+       household, has no shelter_id, and was never on those books -- so
+       accepting two boarding requests moved the number not at all.
+
+   V17 gives a stay somewhere to put an EXPENSE WHILE IT IS HAPPENING.
+       boarding_charges (31 -> 32 tables, 67 -> 69 foreign keys). Before it,
+       the only place to record the Tuesday worming tablet was the check-out
+       dialog on Friday -- billing_slip_items hangs off a slip, and a slip
+       does not exist until the stay is completed.
+
+       TWO TABLES FOR TWO LIFECYCLES, not duplication. boarding_charges is
+       ACCRUING -- staff add, correct and remove it while the animal is here,
+       and nobody has been billed. billing_slip_items is FROZEN, a line on an
+       issued bill. complete() copies the first into the second, which is the
+       same freeze daily_rate and unit_rate already get: money a customer has
+       been quoted stops moving.
+
+   V18 adds ROOM_CHANGE to boarding_updates.update_type, so a pet moved
+       between rooms mid-stay says so on the stay's own timeline. APPENDED at
+       the end: MySQL stores an ENUM as the INDEX of the value, so inserting
+       one in the middle would renumber every value after it and silently
+       change what existing rows mean. Verified -- the original six keep 1..6
+       and ROOM_CHANGE is 7.
+
+   V16 gives a room a SIZE. shelter_suites gains capacity (282 columns,
+       37 CHECKs), and daycare_attendance loses uq_suite_band (20 -> 19
+       UNIQUE keys) in exchange for idx_attendance_suite_band, so the index
+       count is unchanged.
+
+       THE POINT IS WHAT MOVED OUT OF THE SCHEMA. uq_suite_band said "one
+       animal per room per band", which is the right rule for a kennel and
+       the wrong one for a twenty-place cat loft. The replacement rule --
+       "no more animals than shelter_suites.capacity" -- counts rows in TWO
+       tables against a column in a THIRD, which no MySQL constraint can
+       express: a CHECK may not contain a subquery, a UNIQUE key counts to
+       exactly one, and there is no EXCLUDE. So it lives in a transaction
+       with SELECT ... FOR UPDATE, alongside the boarding overlap rule V1
+       handed over for the same reason. See docs/TRANSACTIONS.txt.
+
+       The same shape appears one level up: shelters.capacity is the
+       building's licensed headcount, and BoardingService.accept now locks
+       the shelters row before counting residents plus boarders against it.
+       A shelter at its licence refuses the stay and the staff member
+       declines with NO_CAPACITY, which DeclineReason has carried since V1.
+
+   V13 adds the BILLING half: daycare_subscriptions and billing_slips
+       (27 -> 29 tables, 53 -> 62 foreign keys), two daycare columns on
+       shelters, boarding_requests.picked_up_on, and SLIP_ISSUED on the
+       notifications.type ENUM.
+
+       There is NO payment processing anywhere in it -- no gateway, no card
+       storage, no PAID flag. A slip records what is owed and stops; the
+       cash is handed over at the counter. That is a scope decision, not an
+       omission: see docs/BILLING_DESIGN.txt.
+
+ The migrations under backend/src/main/resources/db/migration are the
+ authority. So is docs/pawhome-erd.drawio, which is generated from them.
+
+====================================================================================================
+
+
+----------------------------------------------------------------------------------------------------
+ LEGEND
+----------------------------------------------------------------------------------------------------
+
+   PK   primary key                FK   foreign key
+   PF   composite PK that is also a FK (junction tables)
+   U    unique constraint
+
+   Conventions applied throughout:
+     - BIGINT AUTO_INCREMENT surrogate key on every non-junction table.
+       Signed, not UNSIGNED: an UNSIGNED PK with a signed FK is MySQL
+       errno 150 and a confusing hour. Signed BIGINT is plenty at this scale.
+     - DATETIME (never TIMESTAMP) for instants, always stored in UTC.
+       MySQL has no timezone-aware type; TIMESTAMP converts by session
+       timezone and overflows in 2038.
+     - DECIMAL for money. Never FLOAT or DOUBLE.
+     - ENGINE=InnoDB on every table - required for foreign keys AND for
+       the transactions the course rubric requires.
+     - CHECK constraints are enforced from MySQL 8.0.16. Pin the Docker
+       image to mysql:8.4 - older servers PARSE and SILENTLY IGNORE them.
+
+
+====================================================================================================
+ SECTION 1 - ENUM COLUMNS
+====================================================================================================
+
+ MySQL has no CREATE TYPE. Each closed set is declared inline on its column.
+ Java maps them with @Enumerated(EnumType.STRING); constants must match these
+ labels exactly, including case.
+
+   user_role
+     ENUM('ADMIN', 'STAFF', 'ADOPTER')
+     used by: users.role
+
+   approval_status
+     ENUM('PENDING', 'APPROVED', 'REJECTED')
+     used by: users.approval_status
+
+   shelter_status
+     ENUM('ACTIVE', 'PENDING', 'INACTIVE')
+     used by: shelters.status
+
+   species
+     ENUM('DOG', 'CAT', 'OTHER')
+     used by: pets / shelter_suites / vaccine_types
+
+   age_unit
+     ENUM('WEEKS', 'MONTHS', 'YEARS')
+     used by: pets.age_unit
+
+   sex
+     ENUM('MALE', 'FEMALE')
+     used by: pets.sex
+
+   pet_size
+     ENUM('SMALL', 'MEDIUM', 'LARGE', 'GIANT')
+     used by: pets.size
+
+   pet_status
+     ENUM('AVAILABLE', 'PENDING', 'ADOPTED', 'BOARDING', 'UNAVAILABLE')
+     used by: pets.status
+
+   quiz_type
+     ENUM('ELIGIBILITY', 'PERSONALITY', 'BOARDING')
+     used by: quiz_questions / quiz_attempts
+
+   answer_type
+     ENUM('YES_NO', 'SINGLE_CHOICE', 'MULTI_CHOICE', 'SCALE')
+     used by: quiz_questions.answer_type
+
+   question_category
+     ENUM('ENVIRONMENT', 'LIFESTYLE', 'HISTORY', 'COMMITMENT', 'HEALTH')
+     used by: quiz_questions.category
+
+   question_status
+     ENUM('DRAFT', 'ACTIVE', 'ARCHIVED')
+     used by: quiz_questions.status
+
+   application_status
+     ENUM('PENDING', 'APPROVED', 'REJECTED', 'WITHDRAWN')
+     used by: adoption_applications.status
+
+   decline_reason
+     ENUM('INCOMPLETE_INFO', 'HOUSING_UNSUITABLE', 'INSUFFICIENT_EXPERIENCE', 'PET_ALREADY_MATCHED', 'FAILED_ELIGIBILITY', 'OTHER')
+     used by: adoption_applications.decline_reason_code
+
+   boarding_status
+     ENUM('REQUESTED', 'ACCEPTED', 'ACTIVE', 'COMPLETED', 'DECLINED', 'CANCELLED')
+     used by: boarding_requests.status
+
+   instruction_category
+     ENUM('DIETARY', 'MEDICATION', 'COMFORT_PLAY', 'EXERCISE', 'OTHER')
+     used by: boarding_instructions.category
+
+   boarding_update_type
+     ENUM('ARRIVAL_CHECK_IN', 'FEEDING', 'PLAYTIME', 'MEDICATION', 'HEALTH', 'DEPARTURE')
+     used by: boarding_updates.update_type
+
+   care_type
+     ENUM('FEEDING', 'MEDICATION', 'EXERCISE', 'GROOMING', 'WOUND_CARE')
+     used by: care_tasks / care_logs
+
+   task_priority
+     ENUM('NORMAL', 'CRITICAL')
+     used by: care_tasks.priority
+
+   task_status
+     ENUM('PENDING', 'DONE', 'SKIPPED')
+     used by: care_tasks.status
+
+   vaccination_status
+     ENUM('COMPLETED', 'SCHEDULED')
+     used by: vaccinations.status
+
+   report_type
+     ENUM('ADOPTION_SUMMARY', 'SHELTER_EFFICIENCY', 'PET_INVENTORY', 'QUARTERLY_IMPACT')
+     used by: reports.report_type
+
+   notification_type
+     ENUM('APPLICATION_SUBMITTED', 'APPLICATION_DECIDED', 'BOARDING_DECIDED', 'BOARDING_UPDATE', 'STAFF_APPROVAL', 'CARE_TASK_DUE')
+     used by: notifications.type
+
+
+====================================================================================================
+ SECTION 2 - TABLES
+====================================================================================================
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - IDENTITY & SHELTERS
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  shelters
+  ....................................................................................................
+   A physical rescue centre. Fields taken from the Add Shelter modal.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   U    name                     VARCHAR(120)                   NOT NULL  UNIQUE
+        logo_path                VARCHAR(255)                   NULL      Uploaded logo
+        email                    VARCHAR(160)                   NOT NULL  
+        phone                    VARCHAR(30)                    NOT NULL  Shown to adopters during boarding
+        address_line             VARCHAR(200)                   NOT NULL  
+        city                     VARCHAR(80)                    NOT NULL  
+        state                    VARCHAR(80)                    NOT NULL  
+        zip                      VARCHAR(20)                    NOT NULL  
+        capacity                 INT                            NOT NULL  CHECK (capacity > 0). Denominator of the 28/50 bar
+        status                   ENUM(3)                        NOT NULL  DEFAULT 'PENDING'. Deactivate = status change
+        description              TEXT                           NULL      
+        boarding_rate_daily      DECIMAL(10,2)                  NOT NULL  DEFAULT 0. CHECK (>= 0)
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     status                 ENUM('ACTIVE', 'PENDING', 'INACTIVE')
+
+  ....................................................................................................
+   TABLE  users
+  ....................................................................................................
+   One row per person. Guests are unauthenticated and have no row.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+        full_name                VARCHAR(120)                   NOT NULL  Sign-up asks for one name field
+   U    email                    VARCHAR(160)                   NOT NULL  UNIQUE. Login identifier
+        password_hash            VARCHAR(100)                   NOT NULL  BCrypt
+        phone                    VARCHAR(30)                    NULL      Prefilled into the adoption form
+        role                     ENUM(3)                        NOT NULL  
+        approval_status          ENUM(3)                        NOT NULL  DEFAULT 'APPROVED'; staff sign-ups insert PENDING
+        is_active                BOOLEAN                        NOT NULL  DEFAULT TRUE. Second flag behind isEnabled()
+   FK   shelter_id               BIGINT                         NULL      -> shelters(id) ON DELETE RESTRICT
+        job_title                VARCHAR(80)                    NULL      Shelter Manager / Veterinarian / Lead Volunteer
+        avatar_path              VARCHAR(255)                   NULL      
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+        updated_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     role                   ENUM('ADMIN', 'STAFF', 'ADOPTER')
+     approval_status        ENUM('PENDING', 'APPROVED', 'REJECTED')
+
+   TABLE CHECK CONSTRAINTS:
+     - ck_staff_has_shelter: (role = 'STAFF') = (shelter_id IS NOT NULL)
+
+  ....................................................................................................
+   TABLE  shelter_suites
+  ....................................................................................................
+   Named boarding spaces. From 'Suite 4' / 'Kitty Loft' on the boarding cards.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   shelter_id               BIGINT                         NOT NULL  -> shelters(id) ON DELETE CASCADE
+        name                     VARCHAR(60)                    NOT NULL  UNIQUE (shelter_id, name)
+        species                  ENUM(3)                        NULL      NULL = any species
+        is_active                BOOLEAN                        NOT NULL  DEFAULT TRUE
+        capacity                 INT                            NOT NULL  V16. DEFAULT 1. CHECK (> 0 AND <= 500)
+
+   ENUM COLUMN DEFINITIONS:
+     species                ENUM('DOG', 'CAT', 'OTHER')
+
+   capacity IS NOT shelters.capacity. That one is the whole building's
+   licensed headcount -- the denominator of the "28 / 50" bar. This is the
+   denominator of ONE ROOM's bar. The sum of the second should not exceed the
+   first, and that is deliberately NOT a constraint: a shelter mid-renovation
+   with the rooms entered and the licence not yet raised would be locked out
+   of its own record by something that is really a policy.
+
+   DEFAULT 1 reproduces exactly the pre-V16 behaviour -- one animal per room
+   -- so a suite nobody has sized refuses a second occupant rather than
+   accepting an unbounded number.
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - PETS, TRAITS & PHOTOS
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  pets
+  ....................................................................................................
+   One row per pet for its whole life. status + owner_id carry it from resident to adopted to boarding guest.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   shelter_id               BIGINT                         NOT NULL  -> shelters(id). Shelter of record, never changes
+        name                     VARCHAR(80)                    NOT NULL  
+        species                  ENUM(3)                        NOT NULL  
+        breed                    VARCHAR(100)                   NOT NULL  Free text. Indexed - browse filters on it
+        age_value                SMALLINT                       NOT NULL  CHECK (age_value > 0)
+        age_unit                 ENUM(3)                        NOT NULL  Number + unit, matching the Add Pet modal
+        sex                      ENUM(2)                        NOT NULL  Modal offers a two-way toggle only
+        size                     ENUM(4)                        NOT NULL  
+        weight_kg                DECIMAL(5,2)                   NULL      CHECK (> 0). Profile shows 'Large (65 lbs)'
+        status                   ENUM(5)                        NOT NULL  DEFAULT 'AVAILABLE'
+   FK   owner_id                 BIGINT                         NULL      -> users(id). Set when adopted
+        description              TEXT                           NULL      The 'About Cooper' prose
+        is_neutered              BOOLEAN                        NOT NULL  DEFAULT FALSE
+        is_microchipped          BOOLEAN                        NOT NULL  DEFAULT FALSE
+        adoption_fee             DECIMAL(10,2)                  NOT NULL  DEFAULT 0. CHECK (>= 0)
+        view_count               INT                            NOT NULL  DEFAULT 0
+   FK   created_by               BIGINT                         NOT NULL  -> users(id)
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP. 'Sort by: Newest'
+        updated_at               DATETIME                       NOT NULL  ON UPDATE CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     species                ENUM('DOG', 'CAT', 'OTHER')
+     age_unit               ENUM('WEEKS', 'MONTHS', 'YEARS')
+     sex                    ENUM('MALE', 'FEMALE')
+     size                   ENUM('SMALL', 'MEDIUM', 'LARGE', 'GIANT')
+     status                 ENUM('AVAILABLE', 'PENDING', 'ADOPTED', 'BOARDING', 'UNAVAILABLE')
+
+   TABLE CHECK CONSTRAINTS:
+     - ck_owned_when_placed: (status IN ('ADOPTED','BOARDING')) = (owner_id IS NOT NULL)
+
+   NOTES:
+     - is_vaccinated is deliberately ABSENT - derived in v_pet_listing (3NF).
+
+  ....................................................................................................
+   TABLE  traits
+  ....................................................................................................
+   Personality vocabulary. Seeded with exactly the seven chips the Add Pet modal offers.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   U    label                    VARCHAR(40)                    NOT NULL  UNIQUE
+   U    slug                     VARCHAR(40)                    NOT NULL  UNIQUE. Renaming a label keeps matching intact
+        is_active                BOOLEAN                        NOT NULL  DEFAULT TRUE
+
+   NOTES:
+     - SEED: Friendly, Playful, Calm, Shy, Energetic, Affectionate, Independent.
+
+  ....................................................................................................
+   TABLE  pet_traits
+  ....................................................................................................
+   Which traits a pet has. Powers the card chips and the Traits browse filter.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PF   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE CASCADE
+   PF   trait_id                 BIGINT                         NOT NULL  -> traits(id) ON DELETE RESTRICT
+
+   NOTES:
+     - PRIMARY KEY (pet_id, trait_id) - resolves the M:N between pets and traits.
+
+  ....................................................................................................
+   TABLE  pet_photos
+  ....................................................................................................
+   Gallery. Exactly one photo per pet may be the cover.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE CASCADE
+        file_path                VARCHAR(255)                   NOT NULL  
+        is_cover                 BOOLEAN                        NOT NULL  DEFAULT FALSE
+        cover_key                BIGINT                         NULL      GENERATED - see note
+        sort_order               SMALLINT                       NOT NULL  DEFAULT 0
+   FK   uploaded_by              BIGINT                         NOT NULL  -> users(id)
+        uploaded_at              DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   NOTES:
+     - MySQL has no partial indexes. One-cover-per-pet is enforced with a
+       generated column that is NULL for non-cover rows (NULLs never collide):
+         cover_key BIGINT AS (IF(is_cover, pet_id, NULL)) STORED,
+         UNIQUE KEY uq_pet_cover (cover_key)
+
+  ....................................................................................................
+   TABLE  favorites
+  ....................................................................................................
+   The heart icon and the Favorites page. The one place in the system with a real hard DELETE.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PF   user_id                  BIGINT                         NOT NULL  -> users(id) ON DELETE CASCADE
+   PF   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE CASCADE
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - QUIZ & MATCHING
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  quiz_questions
+  ....................................................................................................
+   One bank, three quiz types. Authored by admin in the Add Question modal.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+        quiz_type                ENUM(3)                        NOT NULL  ELIGIBILITY / PERSONALITY / BOARDING
+        question_text            TEXT                           NOT NULL  
+        answer_type              ENUM(4)                        NOT NULL  All four appear in the admin Type column
+        category                 ENUM(5)                        NOT NULL  Environment / Lifestyle / History ...
+        status                   ENUM(3)                        NOT NULL  DEFAULT 'DRAFT'. Never hard-delete
+        is_required              BOOLEAN                        NOT NULL  DEFAULT TRUE
+        display_order            INT                            NOT NULL  DEFAULT 0. Admin table has drag handles
+   FK   created_by               BIGINT                         NOT NULL  -> users(id)
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     quiz_type              ENUM('ELIGIBILITY', 'PERSONALITY', 'BOARDING')
+     answer_type            ENUM('YES_NO', 'SINGLE_CHOICE', 'MULTI_CHOICE', 'SCALE')
+     category               ENUM('ENVIRONMENT', 'LIFESTYLE', 'HISTORY', 'COMMITMENT', 'HEALTH')
+     status                 ENUM('DRAFT', 'ACTIVE', 'ARCHIVED')
+
+  ....................................................................................................
+   TABLE  quiz_options
+  ....................................................................................................
+   Answer options with the weight field shown in the modal (W: 10 / 5 / 2).
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   question_id              BIGINT                         NOT NULL  -> quiz_questions(id) ON DELETE CASCADE
+        label                    VARCHAR(120)                   NOT NULL  
+        weight                   SMALLINT                       NOT NULL  DEFAULT 0. Sum of chosen weights = score
+        requires_text            BOOLEAN                        NOT NULL  DEFAULT FALSE. Opens the free-text follow-up
+        display_order            INT                            NOT NULL  UNIQUE (question_id, display_order)
+
+  ....................................................................................................
+   TABLE  option_traits
+  ....................................................................................................
+   The bridge between an adopter's answer and a pet's chips. Personality options only.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PF   option_id                BIGINT                         NOT NULL  -> quiz_options(id) ON DELETE CASCADE
+   PF   trait_id                 BIGINT                         NOT NULL  -> traits(id) ON DELETE RESTRICT
+
+   NOTES:
+     - Without this table the match score has nothing to compute on.
+
+  ....................................................................................................
+   TABLE  quiz_attempts
+  ....................................................................................................
+   One row per submission. 'Retake Quiz' appends rather than overwrites.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   user_id                  BIGINT                         NOT NULL  -> users(id) ON DELETE CASCADE
+        quiz_type                ENUM(3)                        NOT NULL  
+        score                    SMALLINT                       NOT NULL  DEFAULT 0
+        max_score                SMALLINT                       NOT NULL  DEFAULT 0. CHECK (score <= max_score)
+        passed                   BOOLEAN                        NOT NULL  DEFAULT FALSE
+        submitted_at             DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     quiz_type              ENUM('ELIGIBILITY', 'PERSONALITY', 'BOARDING')
+
+  ....................................................................................................
+   TABLE  quiz_answers
+  ....................................................................................................
+   One row per SELECTED OPTION, so multi-choice questions work naturally.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   attempt_id               BIGINT                         NOT NULL  -> quiz_attempts(id) ON DELETE CASCADE
+   FK   question_id              BIGINT                         NOT NULL  -> quiz_questions(id) ON DELETE RESTRICT
+   FK   option_id                BIGINT                         NULL      -> quiz_options(id). NULL for SCALE answers
+        answer_text              TEXT                           NULL      The 'what is the schedule?' follow-up
+        scale_value              SMALLINT                       NULL      CHECK (scale_value BETWEEN 1 AND 5)
+
+   NOTES:
+     - UNIQUE (attempt_id, question_id, option_id)
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - ADOPTION
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  adoption_applications
+  ....................................................................................................
+   The three-step wizard. Applicant details are a point-in-time snapshot, not a link.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE RESTRICT
+   FK   applicant_id             BIGINT                         NOT NULL  -> users(id) ON DELETE RESTRICT
+   FK   eligibility_attempt_id   BIGINT                         NOT NULL  -> quiz_attempts(id)
+        quiz_score               SMALLINT                       NOT NULL  Frozen at submit. Rendered as '95/100'
+        applicant_name           VARCHAR(120)                   NOT NULL  SNAPSHOT - step 1
+        applicant_email          VARCHAR(160)                   NOT NULL  SNAPSHOT
+        applicant_phone          VARCHAR(30)                    NOT NULL  SNAPSHOT
+        applicant_address        VARCHAR(200)                   NOT NULL  SNAPSHOT
+        applicant_city           VARCHAR(80)                    NOT NULL  SNAPSHOT
+        home_type                VARCHAR(60)                    NOT NULL  Step 2 - 'Single Family House'
+        time_at_home             VARCHAR(60)                    NOT NULL  'Full-time / WFH'
+        pet_experience           VARCHAR(200)                   NOT NULL  'Owned two dogs previously'
+        household_note           VARCHAR(200)                   NULL      'No other pets, 1 child age 8'
+        status                   ENUM(4)                        NOT NULL  DEFAULT 'PENDING'
+        pending_key              BIGINT                         NULL      GENERATED - see note
+        submitted_at             DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+   FK   reviewed_by              BIGINT                         NULL      -> users(id)
+        reviewed_at              DATETIME                       NULL      reviewed_at - submitted_at = AVG review time
+        decline_reason_code      ENUM(6)                        NULL      Decline modal dropdown
+        decline_message          TEXT                           NULL      Required; shown to the applicant
+
+   ENUM COLUMN DEFINITIONS:
+     status                 ENUM('PENDING', 'APPROVED', 'REJECTED', 'WITHDRAWN')
+     decline_reason_code    ENUM('INCOMPLETE_INFO', 'HOUSING_UNSUITABLE', 'INSUFFICIENT_EXPERIENCE', 'PET_ALREADY_MATCHED', 'FAILED_ELIGIBILITY', 'OTHER')
+
+   TABLE CHECK CONSTRAINTS:
+     - ck_decline_reason: status <> 'REJECTED' OR (decline_reason_code IS NOT NULL AND decline_message IS NOT NULL)
+
+   NOTES:
+     - MySQL has no partial indexes. 'One OPEN application per person per pet'
+       is enforced with a generated column that is NULL unless the row is pending:
+         pending_key BIGINT AS (IF(status='PENDING', pet_id, NULL)) STORED,
+         UNIQUE KEY uq_one_open_app (applicant_id, pending_key)
+       Many people may still apply for the same pet - only the applicant's own
+       duplicate is blocked.
+
+  ....................................................................................................
+   TABLE  adoptions
+  ....................................................................................................
+   The permanent record. Approving an application writes exactly one row.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   application_id           BIGINT                         NOT NULL  -> adoption_applications(id). UNIQUE
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id)
+   FK   adopter_id               BIGINT                         NOT NULL  -> users(id)
+   FK   shelter_id               BIGINT                         NOT NULL  -> shelters(id). Copied for history
+        adopted_on               DATE                           NOT NULL  
+        fee_paid                 DECIMAL(10,2)                  NOT NULL  DEFAULT 0
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - BOARDING
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  boarding_requests
+  ....................................................................................................
+   Requested -> Accepted -> Active -> Completed. Requester must be the pet's current owner.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE RESTRICT
+   FK   owner_id                 BIGINT                         NOT NULL  -> users(id). Service checks pets.owner_id
+   FK   shelter_id               BIGINT                         NOT NULL  -> shelters(id)
+   FK   suite_id                 BIGINT                         NULL      -> shelter_suites(id). Assigned on accept
+   FK   quiz_attempt_id          BIGINT                         NULL      -> quiz_attempts(id). The boarding quiz
+        start_date               DATE                           NOT NULL  
+        end_date                 DATE                           NOT NULL  CHECK (end_date > start_date)
+        status                   ENUM(6)                        NOT NULL  DEFAULT 'REQUESTED'
+        emergency_contact        VARCHAR(160)                   NOT NULL  'Jane Doe, (555) 012-3456'
+        vet_care_authorised      BOOLEAN                        NOT NULL  Own column - staff need it at a glance
+        daily_rate               DECIMAL(10,2)                  NOT NULL  Copied from shelter at request time
+        estimated_cost           DECIMAL(10,2)                  NOT NULL  nights x daily_rate
+        requested_at             DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+   FK   reviewed_by              BIGINT                         NULL      -> users(id)
+        reviewed_at              DATETIME                       NULL      
+        decline_message          TEXT                           NULL      
+
+   ENUM COLUMN DEFINITIONS:
+     status                 ENUM('REQUESTED', 'ACCEPTED', 'ACTIVE', 'COMPLETED', 'DECLINED', 'CANCELLED')
+
+   NOTES:
+     - NO-DOUBLE-BOOKING IS NOT A CONSTRAINT IN MYSQL.
+       PostgreSQL would express it declaratively with EXCLUDE USING gist.
+       MySQL has no equivalent, so the guarantee moves into a TRANSACTION:
+           START TRANSACTION;
+           SELECT id FROM boarding_requests
+            WHERE pet_id = ? AND status IN ('ACCEPTED','ACTIVE')
+              AND start_date <= ? AND end_date >= ?   -- overlap test
+            FOR UPDATE;
+           -- if any row returned -> ROLLBACK and reject
+           UPDATE boarding_requests SET status='ACCEPTED', suite_id=? WHERE id=?;
+           COMMIT;
+       This is the course's required BEGIN/COMMIT/ROLLBACK feature.
+       idx_boarding_overlap exists to shorten the lock this holds.
+
+  ....................................................................................................
+   TABLE  boarding_instructions
+  ....................................................................................................
+   Special care instructions, already categorised in the design (Dietary / Comfort & play).
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   boarding_id              BIGINT                         NOT NULL  -> boarding_requests(id) ON DELETE CASCADE
+        category                 ENUM(5)                        NOT NULL  One labelled card per row
+        body                     TEXT                           NOT NULL  
+
+   ENUM COLUMN DEFINITIONS:
+     category               ENUM('DIETARY', 'MEDICATION', 'COMFORT_PLAY', 'EXERCISE', 'OTHER')
+
+  ....................................................................................................
+   TABLE  boarding_updates
+  ....................................................................................................
+   The 'Health & Care Updates' timeline and the staff 'Post Update' button.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   boarding_id              BIGINT                         NOT NULL  -> boarding_requests(id) ON DELETE CASCADE
+        update_type              ENUM(6)                        NOT NULL  
+        note                     TEXT                           NOT NULL  
+        photo_path               VARCHAR(255)                   NULL      Photo uploads during boarding
+   FK   posted_by                BIGINT                         NOT NULL  -> users(id)
+        posted_at                DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     update_type            ENUM('ARRIVAL_CHECK_IN', 'FEEDING', 'PLAYTIME', 'MEDICATION', 'HEALTH', 'DEPARTURE')
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - CARE & HEALTH
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  care_tasks
+  ....................................................................................................
+   THE SCHEDULE. 'Today's Care Tasks' - due time, assignee, done/not-done.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE CASCADE
+   FK   boarding_id              BIGINT                         NULL      -> boarding_requests(id). NULL for residents
+        task_type                ENUM(5)                        NOT NULL  
+        description              VARCHAR(200)                   NOT NULL  
+        due_at                   DATETIME                       NOT NULL  
+        priority                 ENUM(2)                        NOT NULL  DEFAULT 'NORMAL'
+        status                   ENUM(3)                        NOT NULL  DEFAULT 'PENDING'
+   FK   assigned_to              BIGINT                         NULL      -> users(id)
+   FK   completed_by             BIGINT                         NULL      -> users(id)
+        completed_at             DATETIME                       NULL      
+
+   ENUM COLUMN DEFINITIONS:
+     task_type              ENUM('FEEDING', 'MEDICATION', 'EXERCISE', 'GROOMING', 'WOUND_CARE')
+     priority               ENUM('NORMAL', 'CRITICAL')
+     status                 ENUM('PENDING', 'DONE', 'SKIPPED')
+
+   NOTES:
+     - OVERDUE is NOT stored - it is status='PENDING' AND due_at < NOW().
+
+  ....................................................................................................
+   TABLE  care_logs
+  ....................................................................................................
+   THE RECORD. Append-only: never updated, never deleted.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE CASCADE
+   FK   boarding_id              BIGINT                         NULL      -> boarding_requests(id)
+   FK   task_id                  BIGINT                         NULL      -> care_tasks(id). NULL for ad-hoc logs
+        task_type                ENUM(5)                        NOT NULL  The FEEDING / MEDICATION pill
+        notes                    TEXT                           NOT NULL  'Insulin administered. Pet was calm.'
+   FK   logged_by                BIGINT                         NOT NULL  -> users(id). 'Logged By: Marcus L.'
+        logged_at                DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     task_type              ENUM('FEEDING', 'MEDICATION', 'EXERCISE', 'GROOMING', 'WOUND_CARE')
+
+  ....................................................................................................
+   TABLE  vaccine_types
+  ....................................................................................................
+   Catalog behind the 'Select a vaccine...' dropdown.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   U    name                     VARCHAR(80)                    NOT NULL  UNIQUE. Rabies, DHPP, Bordetella, FVRCP
+        species                  ENUM(3)                        NULL      NULL = all species
+        is_active                BOOLEAN                        NOT NULL  DEFAULT TRUE
+
+   ENUM COLUMN DEFINITIONS:
+     species                ENUM('DOG', 'CAT', 'OTHER')
+
+  ....................................................................................................
+   TABLE  vaccinations
+  ....................................................................................................
+   Fields taken straight from the Add Vaccination modal.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   pet_id                   BIGINT                         NOT NULL  -> pets(id) ON DELETE CASCADE
+   FK   vaccine_type_id          BIGINT                         NOT NULL  -> vaccine_types(id)
+        administered_on          DATE                           NOT NULL  
+        next_due_on              DATE                           NULL      CHECK (next_due_on > administered_on)
+        administered_by          VARCHAR(120)                   NOT NULL  'Dr. Smith' - vet may not be a user
+        batch_lot                VARCHAR(60)                    NULL      Marked optional in the modal
+        status                   ENUM(2)                        NOT NULL  Overdue is DERIVED, not stored
+        certificate_path         VARCHAR(255)                   NULL      PDF/JPG/PNG, max 5MB
+        notes                    TEXT                           NULL      
+   FK   recorded_by              BIGINT                         NOT NULL  -> users(id)
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     status                 ENUM('COMPLETED', 'SCHEDULED')
+
+
+----------------------------------------------------------------------------------------------------
+ MODULE - PLATFORM
+----------------------------------------------------------------------------------------------------
+
+  ....................................................................................................
+   TABLE  audit_log
+  ....................................................................................................
+   Powers 'Recent Activity' on the admin dashboard. Append-only.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   actor_id                 BIGINT                         NULL      -> users(id). NULL for system actions
+        action                   VARCHAR(60)                    NOT NULL  PET_CREATED, APPLICATION_APPROVED
+        entity_type              VARCHAR(40)                    NOT NULL  
+        entity_id                BIGINT                         NOT NULL  
+        detail                   TEXT                           NULL      
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+  ....................................................................................................
+   TABLE  reports
+  ....................................................................................................
+   Generated PDFs listed in the 'Recent Reports' panel with an author and a link.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+        file_name                VARCHAR(160)                   NOT NULL  'Quarterly_Impact_Q3.pdf'
+        file_path                VARCHAR(255)                   NOT NULL  
+        report_type              ENUM(4)                        NOT NULL  
+        date_from                DATE                           NOT NULL  
+        date_to                  DATE                           NOT NULL  CHECK (date_to >= date_from)
+   FK   shelter_id               BIGINT                         NULL      -> shelters(id). NULL = all shelters
+   FK   generated_by             BIGINT                         NULL      -> users(id). NULL = 'by System'
+        generated_at             DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     report_type            ENUM('ADOPTION_SUMMARY', 'SHELTER_EFFICIENCY', 'PET_INVENTORY', 'QUARTERLY_IMPACT')
+
+  ....................................................................................................
+   TABLE  notifications
+  ....................................................................................................
+   The bell icon on every screen, with the admin's unread dot.
+
+   KEY  COLUMN                   TYPE                           NULL      CONSTRAINTS / NOTES
+   ---- ------------------------ ------------------------------ --------- ------------------------------
+   PK   id                       BIGINT                         NOT NULL  AUTO_INCREMENT
+   FK   user_id                  BIGINT                         NOT NULL  -> users(id) ON DELETE CASCADE
+        type                     ENUM(6)                        NOT NULL  
+        title                    VARCHAR(160)                   NOT NULL  
+        body                     TEXT                           NULL      
+        link_url                 VARCHAR(255)                   NULL      
+        read_at                  DATETIME                       NULL      NULL = unread
+        created_at               DATETIME                       NOT NULL  DEFAULT CURRENT_TIMESTAMP
+
+   ENUM COLUMN DEFINITIONS:
+     type                   ENUM('APPLICATION_SUBMITTED', 'APPLICATION_DECIDED', 'BOARDING_DECIDED', 'BOARDING_UPDATE', 'STAFF_APPROVAL', 'CARE_TASK_DUE')
+
+
+====================================================================================================
+ SECTION 3 - VIEWS
+====================================================================================================
+
+  ....................................................................................................
+   VIEW  v_pet_listing
+  ....................................................................................................
+   The single reusable listing projection. Consumed by FOUR pages:
+   guest browse, adopter browse, favourites, and staff Manage Pets.
+
+     pet_id, name, species, breed, age_value, age_unit, sex, size, status,
+     shelter_id, shelter_name, shelter_city,
+     cover_photo_path        from pet_photos WHERE is_cover
+     trait_labels            GROUP_CONCAT over pet_traits -> traits.label
+                             (MySQL's GROUP_CONCAT replaces Postgres string_agg;
+                              raise group_concat_max_len if labels are truncated)
+     is_vaccinated           DERIVED: has >= 1 COMPLETED vaccination AND no
+                             SCHEDULED row with next_due_on < CURDATE()
+     open_application_count  COUNT of PENDING adoption_applications
+
+   Why a view: four pages rendered the same joined shape. One definition means
+   the vaccination rule cannot drift between the guest page and the staff page.
+
+   MySQL note: a view's SELECT has more restrictions than Postgres allows.
+   Build it with plain JOINs and window/aggregate functions rather than
+   derived tables in the FROM clause, and verify it creates before relying on it.
+
+  ....................................................................................................
+   VIEW  v_adopter_traits
+  ....................................................................................................
+   An adopter's derived trait set - the 'YOUR TRAITS' chip row on Recommendations.
+
+     user_id, trait_id, trait_label
+       FROM quiz_attempts (latest PERSONALITY attempt per user)
+       JOIN quiz_answers -> quiz_options -> option_traits -> traits
+
+   Why a view and not a table: it is fully derived from data already stored.
+   Materialising it would be a 3NF violation whose only justification is speed,
+   and the personality quiz is taken rarely enough that speed is not a problem.
+
+   MATCH SCORE (computed in Java, stored nowhere):
+     weighted overlap between v_adopter_traits and pet_traits over the same
+     seven-value vocabulary, normalised to 0-100. A pure function of two sets,
+     so it unit-tests cleanly and explains itself:
+       '92% - matched on Energetic, Affectionate, Playful; missed Independent'
+
+
+====================================================================================================
+ SECTION 4 - INDEXES
+====================================================================================================
+
+ Beyond the automatic PRIMARY / UNIQUE / foreign-key indexes InnoDB creates:
+
+   uq_pet_cover          UNIQUE (cover_key) ON pet_photos
+                         cover_key is a STORED generated column, NULL unless
+                         is_cover. NULLs never collide in a MySQL unique index,
+                         so this enforces exactly one cover photo per pet.
+
+   uq_one_open_app       UNIQUE (applicant_id, pending_key)
+                         ON adoption_applications. Same generated-column
+                         technique: one OPEN application per person per pet,
+                         while many people may still apply for the same pet.
+
+   idx_pets_browse       (status, species, size) ON pets
+                         JUSTIFICATION: the browse page filters on exactly these
+                         three columns and reports '248 pets found'. Without the
+                         index every filter change is a full table scan.
+
+   idx_boarding_overlap  (pet_id, start_date, end_date) ON boarding_requests
+                         JUSTIFICATION: the date-overlap check runs on every
+                         accept, INSIDE a transaction holding SELECT ... FOR
+                         UPDATE row locks. This index shortens the lock window,
+                         not merely the query. ** This is the index to write up
+                         for the course requirement - show EXPLAIN before/after. **
+
+   idx_apps_queue        (status, submitted_at DESC) ON adoption_applications
+                         The staff review queue sorts pending by date.
+
+   idx_care_due          (status, due_at) ON care_tasks
+                         'Today's Care Tasks' and the overdue count.
+
+
+====================================================================================================
+ SECTION 5 - RELATIONSHIPS & CARDINALITIES
+====================================================================================================
+
+ Read as:   PARENT  1 ---- N  CHILD   (via the child's column)
+
+   PARENT                   CARD   CHILD                    VIA COLUMN               MEANING
+   ------------------------ ------ ------------------------ ------------------------ ------------------
+   shelters                 1:N    users                    shelter_id               employs
+   shelters                 1:N    shelter_suites           shelter_id               has
+   shelters                 1:N    pets                     shelter_id               houses
+   users                    1:N    pets                     owner_id                 owns
+   users                    1:N    pets                     created_by               created by
+   pets                     1:N    pet_traits               pet_id                   has
+   traits                   1:N    pet_traits               trait_id                 used by
+   pets                     1:N    pet_photos               pet_id                   gallery
+   users                    1:N    pet_photos               uploaded_by              uploaded by
+   pets                     1:N    favorites                pet_id                   hearted
+   users                    1:N    favorites                user_id                  hearts
+   users                    1:N    quiz_questions           created_by               authored by
+   quiz_questions           1:N    quiz_options             question_id              offers
+   quiz_options             1:N    option_traits            option_id                implies
+   traits                   1:N    option_traits            trait_id                 maps to
+   users                    1:N    quiz_attempts            user_id                  takes
+   quiz_attempts            1:N    quiz_answers             attempt_id               contains
+   quiz_questions           1:N    quiz_answers             question_id              answers
+   quiz_options             1:N    quiz_answers             option_id                selects
+   pets                     1:N    adoption_applications    pet_id                   applied for
+   users                    1:N    adoption_applications    applicant_id             applies
+   quiz_attempts            1:1    adoption_applications    eligibility_attempt_id   attached quiz
+   users                    1:N    adoption_applications    reviewed_by              reviewed by
+   adoption_applications    1:1    adoptions                application_id           results in
+   pets                     1:1    adoptions                pet_id                   of
+   users                    1:N    adoptions                adopter_id               by
+   shelters                 1:N    adoptions                shelter_id               credited to
+   pets                     1:N    boarding_requests        pet_id                   boards
+   users                    1:N    boarding_requests        owner_id                 requested by
+   shelters                 1:N    boarding_requests        shelter_id               hosted by
+   shelter_suites           1:N    boarding_requests        suite_id                 assigned
+   quiz_attempts            1:1    boarding_requests        quiz_attempt_id          boarding quiz
+   users                    1:N    boarding_requests        reviewed_by              reviewed by
+   boarding_requests        1:N    boarding_instructions    boarding_id              instructions
+   boarding_requests        1:N    boarding_updates         boarding_id              timeline
+   users                    1:N    boarding_updates         posted_by                posted by
+   pets                     1:N    care_tasks               pet_id                   scheduled for
+   boarding_requests        1:N    care_tasks               boarding_id              during
+   users                    1:N    care_tasks               assigned_to              assigned to
+   users                    1:N    care_tasks               completed_by             completed by
+   pets                     1:N    care_logs                pet_id                   recorded for
+   boarding_requests        1:N    care_logs                boarding_id              during
+   care_tasks               1:1    care_logs                task_id                  completes
+   users                    1:N    care_logs                logged_by                logged by
+   pets                     1:N    vaccinations             pet_id                   vaccinated
+   vaccine_types            1:N    vaccinations             vaccine_type_id          of type
+   users                    1:N    vaccinations             recorded_by              recorded by
+   users                    1:N    audit_log                actor_id                 acted
+   shelters                 1:N    reports                  shelter_id               scoped to
+   users                    1:N    reports                  generated_by             generated by
+   users                    1:N    notifications            user_id                  notified
+
+ M:N RELATIONSHIPS, resolved by junction tables:
+
+   pets           M --- N  traits        via pet_traits    (pet_id, trait_id)
+   quiz_options   M --- N  traits        via option_traits (option_id, trait_id)
+   users          M --- N  pets          via favorites     (user_id, pet_id)
+   quiz_attempts  M --- N  quiz_options  via quiz_answers
+
+
+====================================================================================================
+ SECTION 6 - NORMALISATION (3NF) AND DOCUMENTED EXCEPTIONS
+====================================================================================================
+
+ All 25 tables are in Third Normal Form except the four column groups below.
+ Each exception is deliberate and shares one justification shape:
+
+      THIS COLUMN IS A HISTORICAL RECORD, NOT A CURRENT FACT.
+
+ -------------------------------------------------------------------------------------------------
+ 1. adoption_applications.applicant_name / _email / _phone / _address / _city
+    Transitively dependent on applicant_id -> users.
+    JUSTIFICATION: an application is a document a staff member reviewed and
+    signed off. If the adopter later moves house, last year's approved
+    application must still show the address it was approved against.
+    Normalising it would silently rewrite a reviewed record.
+
+ 2. adoption_applications.quiz_score
+    Derivable from quiz_attempts.
+    JUSTIFICATION: admins can edit option weights at any time, so recomputing
+    an old score would change it. Frozen at submission, like a printed mark.
+
+ 3. adoptions.shelter_id
+    Reachable via pet_id -> pets.shelter_id (transitive dependency).
+    JUSTIFICATION: 'Adoptions by Shelter' must credit the shelter that
+    performed the adoption even if the pet is later transferred.
+
+ 4. boarding_requests.daily_rate / estimated_cost
+    Derivable from shelters.boarding_rate_daily.
+    JUSTIFICATION: a price quoted to a customer must not change retroactively
+    when the shelter updates its rate.
+ -------------------------------------------------------------------------------------------------
+
+ NOT counted as exceptions - generated columns:
+   pet_photos.cover_key and adoption_applications.pending_key are STORED
+   GENERATED columns, not independent facts. They exist only because MySQL
+   lacks partial indexes; their value is a pure function of columns in the
+   same row, so they introduce no transitive dependency.
+
+ TWO THINGS DELIBERATELY *NOT* STORED, to stay in 3NF:
+
+   pets.is_vaccinated   - derived in v_pet_listing from the vaccination records.
+                          Storing it is how a pet ends up showing a green tick
+                          beside an overdue shot.
+
+   adopter trait set    - exposed as the view v_adopter_traits rather than a
+                          materialised table. Removes the exception and supplies
+                          the reusable VIEW the course requires.
+
+ ALSO DERIVED, NEVER STORED:
+   - 'OVERDUE' care task     = status 'PENDING' AND due_at < NOW()
+   - 'Overdue' vaccination   = status 'SCHEDULED' AND next_due_on < CURDATE()
+   - Shelter occupancy       = COUNT(pets) against shelters.capacity
+   - Average review time     = AVG(TIMESTAMPDIFF(DAY, submitted_at, reviewed_at))
+   - Match score             = overlap(v_adopter_traits, pet_traits)
+
+
+====================================================================================================
+ SECTION 7 - COURSE SQL COVERAGE MAP
+====================================================================================================
+
+ Each rubric requirement, and the application feature that produces it.
+ All seven are demonstrated through real features, not standalone scripts.
+
+ DML .......... INSERT  Add Pet, Add Vaccination, submit application
+                UPDATE  approve application, edit pet, deactivate shelter
+                SELECT  every listing page
+                DELETE  un-hearting a pet on the Favorites page - the one place
+                        a hard delete is correct, because a removed favourite
+                        has no historical value
+
+ AGGREGATION .. Analytics & Reports page:
+                  COUNT(*)  ... GROUP BY shelter_id       -> Adoptions by Shelter
+                  COUNT(*)  ... GROUP BY species, status  -> Pets by Species/Status
+                  AVG(TIMESTAMPDIFF(DAY, submitted_at, reviewed_at))
+                                                          -> 'AVG REVIEW TIME 2.4 days'
+                HAVING: the Shelters Overview capacity alert -
+                  GROUP BY s.id HAVING COUNT(p.id) >= 0.9 * s.capacity
+
+ JOINS ........ INNER JOIN  applications -> users -> pets -> shelters
+                            (the staff Applications table)
+                LEFT JOIN   the 'Overdue Vaccinations' tile must count pets with
+                            NO vaccination record at all, alongside pets whose
+                            shot is overdue. An INNER JOIN silently hides the
+                            never-vaccinated ones - the worst cases. LEFT JOIN
+                            here is a correctness requirement, not a demo.
+
+ SUBQUERY ..... Recommendations must not suggest a pet the adopter already has
+                an open application for - a CORRELATED subquery:
+                  WHERE NOT EXISTS (SELECT 1 FROM adoption_applications a
+                                    WHERE a.pet_id = p.id
+                                      AND a.applicant_id = ?
+                                      AND a.status = 'PENDING')
+
+ VIEW ......... v_pet_listing, used by four pages (Section 3).
+
+ TRANSACTION .. Two, both genuinely needed:
+                (a) Approving an adoption application - five steps that must
+                    all succeed or all roll back:
+                      1. UPDATE adoption_applications SET status='APPROVED'
+                      2. INSERT INTO adoptions ...
+                      3. UPDATE pets SET status='ADOPTED', owner_id=...
+                      4. UPDATE the pet's other PENDING applications -> REJECTED
+                      5. INSERT INTO audit_log ...
+                    Without it a mid-way failure leaves a pet marked ADOPTED
+                    with no adoption record, or two adopters approved for one pet.
+
+                (b) Accepting a boarding request - SELECT ... FOR UPDATE overlap
+                    check. See the boarding_requests notes. In PostgreSQL this
+                    would be an EXCLUDE constraint; MySQL has no equivalent, so
+                    the transaction IS the guarantee.
+
+ INDEX ........ idx_boarding_overlap - written justification in Section 4.
+
+
+====================================================================================================
+ END OF SCHEMA
+====================================================================================================

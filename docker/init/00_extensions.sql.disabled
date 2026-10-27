@@ -1,0 +1,4 @@
+-- Runs automatically the FIRST time the container starts (empty volume).
+-- Editing this file later does nothing until `docker compose down -v`,
+-- which DELETES all data.
+CREATE EXTENSION IF NOT EXISTS vector;

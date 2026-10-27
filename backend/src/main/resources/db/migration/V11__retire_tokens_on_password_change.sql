@@ -1,0 +1,44 @@
+-- =============================================================================
+-- V11__retire_tokens_on_password_change.sql
+--
+-- THE GAP THIS CLOSES
+-- -------------------
+-- Changing a password did nothing to the sessions that were already open. A
+-- JWT is self-contained -- the server verifies a signature and an expiry and
+-- asks the database nothing about the token itself -- so a token stolen or
+-- left on a shared machine kept working for its full 24 hours no matter what
+-- the owner did about it. Changing the password is the one action a person
+-- takes precisely BECAUSE they think somebody else has their credentials, and
+-- it was the action that helped least.
+--
+-- ONE NULLABLE TIMESTAMP, NOT A REVOCATION TABLE
+--
+-- The textbook answer is a blacklist of revoked token ids, and it is the wrong
+-- shape here for two reasons: it grows without bound until something sweeps it,
+-- and it needs a lookup per request against a table that has no other purpose.
+-- This column is read for free -- JwtAuthFilter ALREADY loads the user row on
+-- every request, to check is_active and approval_status -- so the check costs
+-- nothing at all:
+--
+--     refuse the token when   iat < users.tokens_valid_from
+--
+-- It retires every token at once rather than naming individuals, which is
+-- exactly what a password change means: none of the old ones, whoever holds
+-- them.
+--
+-- NULLABLE, AND NULL IS THE DEFAULT, so this migration signs nobody out. A
+-- NOT NULL DEFAULT CURRENT_TIMESTAMP would have ended every live session the
+-- moment it ran -- a deployment that logs out the whole userbase is a worse
+-- outage than the gap it fixes. NULL means "nothing has been retired for this
+-- account", which is true of every row that exists today.
+--
+-- DATETIME, SO SECONDS, WHICH IS WHAT A JWT CARRIES. The `iat` claim is whole
+-- seconds; storing more precision than that would make a token minted in the
+-- same second as the change compare as older than it and refuse the very
+-- session that just changed the password. The service hands out a fresh token
+-- in the same response for that reason -- see MeService.changePassword.
+-- =============================================================================
+
+ALTER TABLE users
+    ADD COLUMN tokens_valid_from DATETIME NULL
+        COMMENT 'Tokens issued before this instant are refused. NULL = none retired.';

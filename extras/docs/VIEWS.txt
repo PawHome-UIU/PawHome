@@ -1,0 +1,131 @@
+====================================================================================================
+ PAWHOME - VIEWS
+ The 2 SQL views, their definitions and their callers
+====================================================================================================
+
+ Course : CSE 3522 - Database Management Systems Laboratory, UIU
+ Source : generated from the project source. Do not hand-edit.
+
+ 3 view definitions across the migrations (2 views; v_pet_listing
+ is defined in V1 and REDEFINED in V9).
+
+
+====================================================================================================
+ VIEW: v_pet_listing        (defined in V1__init.sql)
+====================================================================================================
+
+   CREATE OR REPLACE VIEW v_pet_listing AS
+   SELECT
+       p.id            AS pet_id,
+       p.name          AS pet_name,
+       p.species,
+       p.breed,
+       p.age_value,
+       p.age_unit,
+       p.sex,
+       p.size,
+       p.status,
+       p.adoption_fee,
+       p.owner_id,
+       p.view_count,
+       p.created_at,
+       s.id            AS shelter_id,
+       s.name          AS shelter_name,
+       s.city          AS shelter_city,
+       (SELECT ph.file_path
+          FROM pet_photos ph
+         WHERE ph.pet_id = p.id AND ph.is_cover = TRUE
+         LIMIT 1)                                        AS cover_photo_path,
+       (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR ', ')
+          FROM pet_traits pt
+          JOIN traits t ON t.id = pt.trait_id
+         WHERE pt.pet_id = p.id)                         AS trait_labels,
+       (SELECT COUNT(*)
+          FROM adoption_applications a
+         WHERE a.pet_id = p.id AND a.status = 'PENDING') AS open_application_count,
+       (    EXISTS (SELECT 1 FROM vaccinations v
+                     WHERE v.pet_id = p.id AND v.status = 'COMPLETED')
+        AND NOT EXISTS (SELECT 1 FROM vaccinations v2
+                         WHERE v2.pet_id = p.id
+                           AND v2.status = 'SCHEDULED'
+                           AND v2.next_due_on < CURDATE())
+       )                                                 AS is_vaccinated
+   FROM pets p
+   JOIN shelters s ON s.id = p.shelter_id;
+
+   CALLED FROM:
+     (nothing -- this view is not queried by any code)
+
+====================================================================================================
+ VIEW: v_adopter_traits        (defined in V1__init.sql)
+====================================================================================================
+
+   CREATE OR REPLACE VIEW v_adopter_traits AS
+   SELECT
+       qa.user_id,
+       t.id    AS trait_id,
+       t.label AS trait_label
+   FROM quiz_attempts qa
+   JOIN quiz_answers  ans ON ans.attempt_id = qa.id
+   JOIN option_traits ot  ON ot.option_id   = ans.option_id
+   JOIN traits        t   ON t.id           = ot.trait_id
+   WHERE qa.quiz_type = 'PERSONALITY'
+     -- correlated: only the user's most recent personality attempt counts
+     AND qa.id = (SELECT MAX(qa2.id)
+                    FROM quiz_attempts qa2
+                   WHERE qa2.user_id   = qa.user_id
+                     AND qa2.quiz_type = 'PERSONALITY')
+   GROUP BY qa.user_id, t.id, t.label;
+
+   CALLED FROM:
+     - pet/PetService.java :: withMatch()
+     - quiz/QuizTakingService.java :: myTraits()
+
+====================================================================================================
+ VIEW: v_pet_listing        (defined in V9__household_pets.sql)
+====================================================================================================
+
+   CREATE OR REPLACE VIEW v_pet_listing AS
+   SELECT
+       p.id            AS pet_id,
+       p.name          AS pet_name,
+       p.species,
+       p.breed,
+       p.age_value,
+       p.age_unit,
+       p.sex,
+       p.size,
+       p.status,
+       p.adoption_fee,
+       p.owner_id,
+       p.view_count,
+       p.created_at,
+       s.id            AS shelter_id,
+       s.name          AS shelter_name,
+       s.city          AS shelter_city,
+       (SELECT ph.file_path
+          FROM pet_photos ph
+         WHERE ph.pet_id = p.id AND ph.is_cover = TRUE
+         LIMIT 1)                                        AS cover_photo_path,
+       (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR ', ')
+          FROM pet_traits pt
+          JOIN traits t ON t.id = pt.trait_id
+         WHERE pt.pet_id = p.id)                         AS trait_labels,
+       (SELECT COUNT(*)
+          FROM adoption_applications a
+         WHERE a.pet_id = p.id AND a.status = 'PENDING') AS open_application_count,
+       (    EXISTS (SELECT 1 FROM vaccinations v
+                     WHERE v.pet_id = p.id AND v.status = 'COMPLETED')
+        AND NOT EXISTS (SELECT 1 FROM vaccinations v2
+                         WHERE v2.pet_id = p.id
+                           AND v2.status = 'SCHEDULED'
+                           AND v2.next_due_on < CURDATE())
+       )                                                 AS is_vaccinated
+   FROM pets p
+   JOIN shelters s ON s.id = p.shelter_id
+   -- A household pet is not a listing. Redundant against the join above, and kept
+   -- so that it stays true if anyone ever loosens it.
+   WHERE p.shelter_id IS NOT NULL;
+
+   CALLED FROM:
+     (nothing -- this view is not queried by any code)

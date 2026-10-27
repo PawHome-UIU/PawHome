@@ -1,0 +1,202 @@
+==========================================================================
+PAWHOME - PRESENTATION SPEECH (5 MINUTES, SIMPLE WORDS)
+==========================================================================
+ABOUT 700 WORDS — five to five and a half minutes at a normal speaking
+pace. If you tend to speed up when nervous you will land nearer five; if
+you pause a lot, drop slide 13 and you are safely inside.
+
+Words in brackets are for you, not to be said out loud.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 1 — TITLE
+
+Good morning. Our project is PAWHOME. It is a system for animal shelters.
+
+Most shelter apps stop at adoption. Ours keeps going — when the pet comes
+back for boarding, or for daycare.
+
+Our main idea is this: WE LET THE DATABASE HOLD THE RULES, NOT THE CODE.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 2 — WHAT IT IS
+
+Three kinds of people use it. An ADOPTER finds a pet and applies for it. A
+STAFF MEMBER runs one shelter. An ADMIN runs all the shelters together.
+
+It has 32 tables and 47 screens. Every number we show today came out of
+the real database. We did not guess any of them.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 3 — WHY WE MADE IT
+
+Small shelters here still use notebooks. That is fine for a list of names.
+It fails when an animal has a history.
+
+Which injection is due? Who fed the dog in room three? How many nights did
+the pet stay? Every one of those needs a database.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 4 — FEATURES
+
+One thing from each role.
+
+The adopter takes a QUIZ, so we can suggest pets that match the person —
+not just the breed.
+
+Staff APPROVE AN APPLICATION, and the system automatically rejects all the
+others for that same pet.
+
+The admin sees CHARTS — money earned, nights booked, pets adopted.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 5 — DESIGN APPROACH
+
+Our rule was simple: IF THE DATABASE CAN CHECK SOMETHING, LET THE DATABASE
+CHECK IT.
+
+A rule written in code can be broken — someone types a command by hand at
+night. A rule written into the database cannot be broken by anyone.
+
+So we wrote 39 CHECK rules and 69 foreign keys.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 6 — ERD
+
+This is our ERD — 32 tables, 69 links.
+
+We did not draw it. We asked the database to describe itself. So it is
+always correct.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 7 — DELETE RULES
+
+This is my favourite part.
+
+For every link we asked one question: IF THE PARENT IS DELETED, WHAT
+HAPPENS TO THE CHILD?
+
+Look at the pets table. It gives two different answers.
+
+Photos and health records are DELETED WITH THE PET. A photo of a dog means
+nothing once the dog is gone.
+
+But adoptions and bookings STOP YOU DELETING THE PET AT ALL. An adoption
+is an agreement between two people. It cannot disappear because someone
+tidied up a record.
+
+Same table. Two different answers. It depends on what the row means.
+
+[Pause here.]
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 8 — VIEWS
+
+We made four views. A view lets us write a rule ONCE.
+
+Before, the rule for "this pet is vaccinated" sat in three places — and
+they had already started to disagree. Now it lives in one.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 9 — TRANSACTIONS
+
+A CHECK rule can only look at ONE ROW. So it cannot answer "is this room
+full?" — that needs other rows.
+
+For those we use LOCKS.
+
+Imagine two staff book the same dog at the same second. Without a lock,
+both see an empty calendar and both save. The dog is booked twice.
+
+With our lock, the second person must wait. Then they see the new booking,
+and the system says no.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 10 — INDEXES
+
+We have 124 indexes. Two of them are not for speed — they are RULES.
+
+MySQL has no simple way to say "only one cover photo per pet". So we made
+a small trick column that stays empty unless the photo is the cover. Empty
+values never clash. So a pet can have many photos, but only one cover.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 11 — COMPARISON
+
+We compared ourselves with two real products.
+
+PETFINDER only shows listings — you apply to the shelter, not through the
+app. SHELTERLUV is a full system used by over 2,500 shelters, much bigger
+than ours. We are not claiming we beat it.
+
+But look at the purple rows. BOARDING WITH ROOMS. DAYCARE. PERSONALITY
+MATCHING. Neither product has them at all.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 12 — LIMITS
+
+We checked our own system, found problems, and are showing them. The admin
+has no daycare screen yet. Quiz questions cannot be reordered. And some
+rules are only safe if you go through the app.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 13 — FUTURE WORK
+
+Next: FOSTER HOMES, TESTS for the booking rules, and ONLINE PAYMENT.
+
+--------------------------------------------------------------------------
+
+>>> SLIDE 14 — END
+
+So — how much of a system's safety can live inside the database?
+
+Our answer: MOST OF IT, BUT NOT ALL. Rules about one row fit easily. Rules
+about many rows do not fit, and need locks instead.
+
+Learning that difference was the best thing this project taught us.
+
+Thank you. We are happy to take questions.
+
+--------------------------------------------------------------------------
+
+IF THEY ASK YOU SOMETHING
+-------------------------
+
+WHY MYSQL? — It was the recommended database for the course.
+
+HOW DO YOU KNOW THE LOCK WORKS? — We tested it with two users at once.
+With the lock, the second one waited. Without it, the pet was booked
+twice.
+
+WHY COPY THE PRICE ONTO THE BOOKING? — So that if the shelter raises its
+price later, old bookings keep the old price.
+
+CAN YOU DELETE A USER? — Usually no. If they have done any work in the
+system, the database refuses. We switch the account off instead.
+
+WHAT WAS HARDEST? — Fitting pets into rooms, when some rooms only take
+cats and some only take dogs.
+
+--------------------------------------------------------------------------
+
+TIPS
+----
+
+  * Pause after "SAME TABLE. TWO DIFFERENT ANSWERS." That is the line to
+    let sink in.
+  * Do not read the bullets on the slides. Say the one sentence under
+    each.
+  * Running out of time? Cut slides 4 and 13. Keep 7, 9 and 10 — those are
+    the database parts.

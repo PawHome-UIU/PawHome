@@ -1,0 +1,12 @@
+Flyway migrations go here.
+
+Naming:  V1__init.sql, V2__add_pets.sql   <-- TWO underscores after the version.
+
+Rules:
+  * Never edit a migration that has already run. Add a new one.
+  * Version numbers must be unique and are applied in order.
+  * Turn Flyway on in application.yaml (spring.flyway.enabled: true) once
+    V1__init.sql exists.
+
+Do NOT copy Cha Ghor's V1-V38. Those are 38 incremental patches to that
+domain, half of them fixes to earlier ones. Start clean at V1.

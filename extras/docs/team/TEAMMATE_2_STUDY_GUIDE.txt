@@ -1,0 +1,487 @@
+================================================================================
+PAWHOME  --  TEAMMATE 2  --  STUDY GUIDE
+MY PART:  Shelter staff screens + the shared UI kit + Settings
+BRANCH:   feature/staff-ui
+================================================================================
+
+Read PART A (shared) first. PART B is your own files.
+
+================================================================================
+PART A  --  THE SHARED STUFF  (all three of us must know this)
+================================================================================
+
+--------------------------------------------------------------------------------
+A1.  WHAT WE USED
+--------------------------------------------------------------------------------
+
+FRONTEND (the part you see in the browser)
+  React            19.2.8    builds the screens out of small reusable pieces
+  React Router     7.18.3    decides which page shows for which web address
+  Vite             8.2.2     runs the dev server, builds the final files
+  Tailwind CSS     3.4.19    styling. We write classes like "bg-pw-primary"
+                             instead of writing separate CSS files
+  Axios            1.20.0    sends requests to the backend
+  Recharts         3.10.1    draws the charts on the admin analytics page
+  react-icons      5.7.0     the icon set
+
+BACKEND (the part you do not see)
+  Spring Boot      3.4.1     the Java web server
+  Java             17
+  Maven                      downloads libraries and builds the project
+  Spring Security            login and permissions
+  JWT (jjwt)                 the login token
+  Flyway                     creates the database tables from .sql files.
+                             We also need the flyway-mysql module: Flyway 10
+                             split each database into its own module, so
+                             flyway-core alone will NOT migrate MySQL.
+
+DATABASE
+  MySQL            8.4       runs inside Docker
+  Docker Compose             starts the database with one command
+
+WHY MySQL 8.4 AND NOT OLDER:  CHECK constraints are only ENFORCED from MySQL
+8.0.16. Older servers read them and silently ignore them, which is worse than
+not having them. Our schema relies on CHECK, so the version is pinned.
+
+WHY TAILWIND 3 AND NOT 4:  version 4 changed how it is configured. Our config
+files are written for version 3. Upgrading would break the styling.
+
+
+--------------------------------------------------------------------------------
+A2.  HOW THE WHOLE THING WORKS  (the big picture)
+--------------------------------------------------------------------------------
+
+Three separate programs run at the same time. They talk over the network.
+
+    BROWSER  (React, port 5174)
+        |
+        |  sends a request  (Axios)
+        v
+    BACKEND  (Spring Boot, port 8081)
+        |
+        |  reads / writes rows
+        v
+    DATABASE (MySQL 8.4 in Docker, port 3307)
+
+The browser NEVER talks to the database directly. It always goes through the
+backend. That is on purpose: the backend is the only place that can check
+"are you allowed to do this?"
+
+PORTS: 3307 database, 8081 backend, 5174 frontend.
+3306 is the normal MySQL port, so we moved ours to 3307 to avoid clashing with
+any MySQL already installed on the laptop. The backend and frontend ports are
+shifted for the same reason.
+
+
+--------------------------------------------------------------------------------
+A3.  THE WORKFLOW  (how we run it every day)
+--------------------------------------------------------------------------------
+
+Open three terminal tabs. Database FIRST -- the backend will not start without it.
+
+    1)  cd docker      then   docker compose up -d          (database)
+    2)  cd backend     then   ./mvnw spring-boot:run        (backend)
+    3)  cd frontend    then   npm run dev                   (frontend)
+
+Then open  http://localhost:5174
+
+To check everything is talking:   http://localhost:8081/api/v1/health
+It should say  "database": "connected".
+
+GIT WORKFLOW
+    Each of us has our own branch. We never work directly on "main".
+        Teammate 1  ->  feature/adopter-auth
+        Teammate 2  ->  feature/staff-ui
+        Teammate 3  ->  feature/admin-public
+    Every day we pull "main" into our branch so conflicts stay small.
+    When a part is done we open a Pull Request on GitHub and merge into main.
+
+
+--------------------------------------------------------------------------------
+A4.  THE MAIN FILES THAT CONTROL EVERYTHING
+--------------------------------------------------------------------------------
+
+  index.html                the one HTML page. It has one empty <div id="root">
+                            and loads main.jsx. That is all it does.
+
+  src/main.jsx              the starting point. It puts React inside that div
+                            and wraps the app in BrowserRouter (the router).
+
+  src/App.jsx               THE CONTROL FILE. Every page address in the whole
+                            app is listed here. If a page is not in App.jsx,
+                            you cannot reach it.
+
+  src/index.css             loads Tailwind.
+
+  tailwind.config.js        our colour palette ("pw" colours) lives here.
+                            One change here updates the colour everywhere.
+
+  vite.config.js            sets the frontend port to 5174.
+
+  src/lib/config.js         the backend address, in ONE place.
+  src/api/client.js         the Axios setup that talks to the backend.
+
+If the teacher asks "which file controls the app?" -- the answer is
+src/App.jsx for pages, and src/main.jsx for starting it.
+
+
+--------------------------------------------------------------------------------
+A5.  HOW ROUTING WORKS  (which page shows for which address)
+--------------------------------------------------------------------------------
+
+React is a SINGLE PAGE APPLICATION. The browser only ever loads one HTML file.
+React Router looks at the address bar and swaps which component is drawn.
+The page never actually reloads, which is why it feels fast.
+
+All routes live in src/App.jsx, in four groups:
+
+  PUBLIC   (anyone)
+      /                  landing page
+      /pets              browse all pets
+      /pets/:id          one pet, signed out
+      /features  /services  /about
+
+  AUTH
+      /join              pick your role first
+      /login  /register  /forgot-password
+
+  ADMIN portal
+      /admin             dashboard
+      /admin/shelters  /admin/users  /admin/analytics
+      /admin/reports   /admin/quiz   /admin/settings
+
+  STAFF portal
+      /staff             dashboard
+      /staff/pets  /staff/applications  /staff/applications/:id
+      /staff/care  /staff/boarding      /staff/settings
+
+  ADOPTER portal
+      /app               dashboard
+      /app/pets  /app/pets/:id  /app/pets/:id/apply
+      /app/recommendations  /app/applications
+      /app/boarding  /app/boarding/:id  /app/favorites  /app/settings
+
+  ANYTHING ELSE
+      *                  404 Not Found page
+
+TWO THINGS TO REMEMBER:
+  * ":id" means a changing value. /app/pets/7 shows pet number 7.
+  * The "*" 404 route MUST stay LAST. If it moves up, every page becomes 404.
+
+WHY THE ADOPTER PORTAL IS /app AND NOT /adopter:  it is the address a logged-in
+user lives in all day, so we kept it short.
+
+
+--------------------------------------------------------------------------------
+A6.  HOW WE STOP AN ADOPTER SEEING THE ADMIN PAGES
+--------------------------------------------------------------------------------
+
+BE HONEST ABOUT THIS. The teacher will ask, and the truth is fine:
+
+  "Right now no route is guarded. The pages show placeholder data, so someone
+   typing /admin sees fake numbers, not real records. The real protection is
+   built in the next phase."
+
+THE PLAN IS TWO LAYERS. Explain both -- this is the part that scores marks.
+
+  LAYER 1 -- THE BACKEND. This is the real security.
+      Every endpoint gets a Java annotation:
+
+          @PreAuthorize("hasRole('ADMIN')")
+          public List<Shelter> listShelters() { ... }
+
+      When a request arrives, the backend reads the login token, sees the
+      user's role, and refuses with "403 Forbidden" if it does not match.
+      This cannot be bypassed from the browser.
+
+  LAYER 2 -- THE FRONTEND. This is only for a tidy experience.
+      A <ProtectedRoute> wrapper in App.jsx will hide pages the user should
+      not see, so they never click a button that fails:
+
+          <Route path="/admin" element={
+            <ProtectedRoute role="ADMIN"><AdminDashboard /></ProtectedRoute>
+          } />
+
+THE KEY SENTENCE TO SAY:
+  "The frontend guard only hides menus. Anyone can edit React in their own
+   browser. The backend check is the one that actually protects the data."
+
+Roles are stored on the user row in the database and put inside the login
+token when you sign in.
+
+
+--------------------------------------------------------------------------------
+A7.  WHAT EACH FOLDER DOES
+--------------------------------------------------------------------------------
+
+  src/pages/            one file = one full screen
+      public/               pages anyone can see
+      auth/                 login, register, role picker
+      admin/                admin portal screens
+      staff/                shelter staff screens
+      adopter/              logged-in adopter screens
+
+  src/components/       reusable pieces, used by many pages
+      ui/                   buttons, inputs, modals, cards  (the design system)
+      layout/               public nav bar, footer, page wrappers
+      admin/  staff/  adopter/   pieces used by only that one portal
+      pets/                 pet card + status badge
+      portal/               the shell around the logged-in portals
+      brand/                logo and paw icon
+      sections/             repeated marketing blocks on the public pages
+
+  src/data/             FAKE DATA. Temporary. Explained in A8.
+  src/lib/              small helpers: the backend address, error messages,
+                        chart colours
+  src/api/              client.js -- the one file that talks to the backend
+
+  backend/src/main/java/com/pawhome/backend/    the Java code
+  backend/src/main/resources/db/migration/      the .sql files that build the
+                                                database tables
+  docker/                                        starts MySQL
+
+
+--------------------------------------------------------------------------------
+A8.  HOW BUTTONS WILL CONNECT TO THE API
+--------------------------------------------------------------------------------
+
+WHERE WE ARE NOW (say this honestly):
+  27 of our 29 pages read from fake data files in src/data/.
+  Only LoginPage and RegisterPage actually call the backend.
+  The backend REST endpoints are the next phase.
+
+WHY THE FAKE DATA IS NOT LAZY -- this is the good answer:
+  The fake data is shaped EXACTLY like the database views return.
+  There is a comment at the top of src/data/pets.js that says so.
+  That means swapping to the real backend changes ONE line in each page --
+  where the data comes from -- not the twenty components that display it.
+
+HOW THE CONNECTION WORKS, IN ORDER:
+
+  1) src/lib/config.js holds the backend address in one place:
+
+         export const API_BASE =
+           import.meta.env.VITE_API_URL || "http://localhost:8081/api/v1";
+
+  2) src/api/client.js creates one Axios object using that address, and
+     automatically attaches the login token to every request:
+
+         api.interceptors.request.use((config) => {
+           const token = localStorage.getItem("token");
+           if (token) config.headers.Authorization = `Bearer ${token}`;
+           return config;
+         });
+
+     It also watches the replies. If the backend says "401 Unauthorized"
+     (token expired), it clears the token and sends the user to /login.
+
+  3) A page imports that object and uses it.
+
+     READING data when the page opens:
+
+         useEffect(() => {
+           api.get("/pets").then(({ data }) => setPets(data));
+         }, []);
+
+     SENDING data when a button is clicked:
+
+         const submit = async () => {
+           await api.post("/applications", { petId, message });
+           setDone(true);
+         };
+         ...
+         <Button onClick={submit}>Submit application</Button>
+
+  4) The backend receives it:
+
+         POST /api/v1/applications
+           -> Spring checks the token and the role
+           -> Controller receives it
+           -> Service applies the rules
+           -> Repository saves the row in MySQL
+           -> sends JSON back
+           -> React updates the screen
+
+SO THE FULL CHAIN IS:
+    button click -> api.post -> Spring Controller -> Service -> Repository
+                 -> MySQL -> back up the same path -> screen updates
+
+
+--------------------------------------------------------------------------------
+A9.  HONEST STATUS  --  say this before the teacher finds it
+--------------------------------------------------------------------------------
+
+DONE:
+  * Database design: V1__init.sql is 817 lines of real tables with proper
+    keys and constraints. V2 fills in reference data.
+  * The whole frontend: 86 files, about 9,400 lines, 29 screens.
+  * A shared design system so every page looks the same.
+  * Backend project set up and connecting to MySQL. The health check
+    at /api/v1/health proves the chain works.
+  * Login and Register already send real requests.
+
+NOT DONE YET:
+  * The REST endpoints (controllers, services, repositories in Java).
+  * Login tokens and route guards.
+  * Automated tests.
+
+NEXT STEPS, IN ORDER:
+  1. Build the auth endpoints, so login returns a real token.
+  2. Add ProtectedRoute and the role checks.
+  3. Build one feature end to end (pets), then copy that pattern.
+  4. Replace src/data/ files one page at a time.
+
+
+================================================================================
+PART B  --  MY OWN FILES  (Teammate 2)
+================================================================================
+
+I own two things:
+  1. The staff console -- what shelter workers use every day.
+  2. The UI KIT -- the buttons, inputs and modals that BOTH other teammates
+     use on every single page. That makes me the most depended-on person.
+
+--------------------------------------------------------------------------------
+B1.  MY PAGES  --  what each one does and what its buttons do
+--------------------------------------------------------------------------------
+
+  StaffDashboard.jsx            /staff
+      The staff home screen: today's numbers and recent activity.
+      BUTTONS: "Review Applications" -> /staff/applications
+               "View Activity History"
+               "See Success Stories"
+
+  PetsManagementPage.jsx        /staff/pets
+      The shelter's pet list. This is where a new rescue is entered.
+      BUTTONS: "Add Pet" opens AddPetModal.
+               "Edit" / "Edit Profile" opens the same modal in edit mode.
+      ONE MODAL DOES BOTH ADD AND EDIT -- it just changes its title and the
+      save button text. Two separate modals would be the same code twice.
+
+  ApplicationsPage.jsx          /staff/applications
+      Every adoption application waiting for a decision, with filters.
+      Clicking a row opens the review page for that application.
+
+  ApplicationReviewPage.jsx     /staff/applications/:id
+      One application in full, with the adopter's answers.
+      BUTTONS: "Approve"  -> sets the decision to APPROVED
+               "Decline"  -> opens DeclineApplicationModal, which asks for a
+                             reason first
+      After deciding it navigates back to /staff/applications.
+      WHY DECLINE ASKS FOR A REASON AND APPROVE DOES NOT: declining is the
+      one the adopter will question, so we record why.
+
+  CareHealthPage.jsx            /staff/care
+      Health records: vaccinations, treatments, check-ups.
+      BUTTONS: "Save Log" saves a care note.  "Cancel" closes without saving.
+               Add Vaccination opens AddVaccinationModal.
+
+  BoardingPage.jsx              /staff/boarding
+      Boarding requests from adopters.
+      BUTTONS: "Accept"            approve the booking
+               "Accept & Assign"   approve AND give it a kennel in one step
+               "Decline"           opens DeclineBoardingModal (asks a reason)
+               "Cancel"            close without doing anything
+
+  SettingsPage.jsx              /staff/settings  (also /admin and /app)
+      ONE settings page shared by all three portals. It looks at the web
+      address to decide which sidebar to draw around itself.
+      BUTTONS: "Save changes" (profile + notification switches)
+               "Update password"
+      WHY ONE FILE: three copies of a settings page is three places to fix
+      every bug.
+
+--------------------------------------------------------------------------------
+B2.  MY MODALS  (pop-up windows)
+--------------------------------------------------------------------------------
+
+  AddPetModal.jsx               add a new pet, or edit an existing one.
+                                Button says "Add pet" or "Save changes".
+  AddVaccinationModal.jsx       record a vaccination. "Save Vaccination".
+  DeclineApplicationModal.jsx   asks for a reason before declining.
+  DeclineBoardingModal.jsx      same, for a boarding request.
+  PostBoardingUpdateModal.jsx   send the owner an update about their pet's
+                                stay. Button: "Post update".
+  StaffLayout.jsx               the frame around every /staff page.
+
+--------------------------------------------------------------------------------
+B3.  THE UI KIT  --  my most important work
+--------------------------------------------------------------------------------
+
+src/components/ui/  --  10 files used by all 29 pages in the project.
+
+  Button.jsx        every button in the app. Has variants (primary, outline,
+                    danger) and sizes, so nobody writes their own.
+  Input.jsx         text boxes.
+  Field.jsx         wraps an input with its label and its error message.
+  Checkbox.jsx      tick boxes.
+  Dropdown.jsx      select menus.
+  Card.jsx          the white rounded box used everywhere.
+  Modal.jsx         the pop-up frame: dark background, box in the middle,
+                    close on Escape. Every modal in the app is built on it.
+  SuccessModal.jsx  the green "that worked" confirmation.
+  Tabs.jsx          tab switching inside a page.
+  Accordion.jsx     expand and collapse sections (used on the FAQ).
+
+WHY THIS MATTERS -- SAY THIS TO THE TEACHER:
+  "Nobody on our team hand-writes a button. Every input, modal and card on
+   all 29 screens comes from these 10 files. If we change the button style,
+   it changes in one place and updates the whole app."
+
+RULES I FOLLOW AS THE OWNER:
+  * No colour codes like #4a7c59 inside these files. Everything uses the
+    "pw" palette from tailwind.config.js.
+  * I ADD props, I never RENAME them. Renaming a prop would silently break
+    every page the other two wrote.
+  * If someone needs a new button style, I add it here. They never copy
+    Button.jsx into their own folder.
+
+  components/portal/PortalShell.jsx
+      The shared frame for logged-in portals: sidebar, top bar, content.
+      Used by both staff and adopter portals with different menu items.
+  components/portal/PanelCard.jsx
+      A titled panel used inside those portals.
+
+  data/staff.js
+      My fake data, shaped like the database views.
+
+--------------------------------------------------------------------------------
+B4.  QUESTIONS THE TEACHER MAY ASK ME
+--------------------------------------------------------------------------------
+
+Q: Why did you build your own components instead of using Material UI?
+A: Full control over the look, no large dependency, and it shows we
+   understand how component props work. The honest trade-off is that a
+   library would have been faster and better for accessibility.
+
+Q: What happens if you rename a prop in Button.jsx?
+A: Every page the other two wrote would break at once. So I only add new
+   props, never rename old ones, and I announce any change first.
+
+Q: Why is there one SettingsPage for three different portals?
+A: The content is the same for everyone -- profile, password, notifications.
+   Only the sidebar differs, and the page picks that from the web address.
+   Three copies would mean fixing every bug three times.
+
+Q: Why does declining ask for a reason but approving does not?
+A: Declining is the decision the adopter will question. Recording a reason
+   means staff can explain it later.
+
+Q: Is your data real?
+A: It comes from data/staff.js right now. It is shaped exactly like the
+   database views return, so connecting the real API is a one-line change
+   per page, not a rewrite.
+
+Q: How would you connect the "Add Pet" button to the backend?
+A: The modal's save handler becomes:
+       await api.post("/pets", form);
+   then it refreshes the list. The Axios client already attaches the login
+   token automatically, so no extra work there.
+
+Q: What is a modal and why use one instead of a page?
+A: A pop-up over the current screen. We use it when the user is doing a
+   quick side-task and should not lose their place in the list behind it.
+
+Q: What is left to do in your part?
+A: The Java endpoints for pets, applications, boarding and care records,
+   then replacing data/staff.js page by page.

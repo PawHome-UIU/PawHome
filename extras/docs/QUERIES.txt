@@ -1,0 +1,1956 @@
+====================================================================================================
+ PAWHOME - SQL QUERIES
+ Every query written by hand in the backend
+====================================================================================================
+
+ Course : CSE 3522 - Database Management Systems Laboratory, UIU
+ Source : generated from the project source. Do not hand-edit.
+
+ SUMMARY -- every SQL statement written by hand in the backend
+
+   In the SERVICES, through JdbcTemplate            92
+     jdbc.query                50
+     jdbc.queryForList         11
+     jdbc.queryForObject       22
+     jdbc.update                7
+     jdbc.batchUpdate           2
+
+   In the REPOSITORIES, as @Query                   57
+     read  (SELECT)            45
+     write (@Modifying)        12
+     native SQL                44
+     JPQL                      13
+     FOR UPDATE                 6
+
+   TOTAL                                           149
+
+ NOTHING IS DERIVED FROM A METHOD NAME. Spring Data will happily turn
+ findByPetIdAndStatus into SQL for you, and it did here for 29 methods -- but
+ then the statement exists nowhere you can read it, review it, or check it
+ against an index. Every one of those was replaced with the @Query it stands
+ for. The count above is therefore the whole query surface of this project;
+ there is no second, invisible set.
+
+ HOW THIS FILE IS ORGANISED. The listing below is by module and shows the
+ service queries, plus the seven repository queries that read best next to the
+ code calling them -- the SELECT ... FOR UPDATE locks above all. EVERY
+ repository @Query, those seven included, is then listed in full in the
+ REPOSITORY QUERIES section at the end of this file.
+
+ THE daycare AND billing MODULES SIT LAST rather than alphabetically, because
+ they were added by V13 and appending them is how this stayed a faithful
+ extract instead of a hand-edit somebody has to trust.
+
+ EVERY QUERY BELOW IS PARAMETERISED. There is no string concatenation of user
+ input anywhere in this file -- every variable arrives as a `?` bind, so no
+ request can reach the SQL as syntax. That is SQL-injection safety by
+ construction rather than by escaping.
+
+
+====================================================================================================
+ MODULE: admin   (3 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ admin/AdminUserService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  list()
+
+      SELECT  u.id, u.full_name, u.email, u.role, u.approval_status,
+              u.email_verified, u.is_active, u.shelter_id,
+              s.name AS shelter_name, u.job_title, u.created_at,
+              -- An outstanding invitation. Correlated EXISTS rather than
+              -- a join, because a join to user_tokens would duplicate the
+              -- user row once per token they have ever been sent.
+              EXISTS (SELECT 1
+                        FROM user_tokens t
+                       WHERE t.user_id     = u.id
+                         AND t.token_type  = 'INVITE'
+                         AND t.used_at     IS NULL
+                         AND t.expires_at  > UTC_TIMESTAMP()) AS invite_pending
+      FROM        users    u
+      LEFT JOIN   shelters s ON s.id = u.shelter_id
+      ORDER BY    u.created_at DESC
+
+  [jdbc.query]  row()
+
+      SELECT name FROM shelters WHERE id = ?
+
+  [jdbc.queryForObject]  row()
+
+      SELECT EXISTS (SELECT 1 FROM user_tokens
+                      WHERE user_id = ? AND token_type = 'INVITE'
+                        AND used_at IS NULL
+                        AND expires_at > UTC_TIMESTAMP())
+
+====================================================================================================
+ MODULE: analytics   (7 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ analytics/AnalyticsService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  adoptionsByMonth()
+
+      WITH RECURSIVE months AS (
+          SELECT DATE_FORMAT(?, '%Y-%m-01') AS m
+          UNION ALL
+          SELECT DATE_ADD(m, INTERVAL 1 MONTH) FROM months
+           WHERE m < DATE_FORMAT(?, '%Y-%m-01')
+      )
+      SELECT DATE_FORMAT(months.m, '%b %Y') AS month,
+             COUNT(a.id)                    AS adoptions
+        FROM months
+        LEFT JOIN adoptions a
+               ON a.adopted_on >= months.m
+              AND a.adopted_on <  DATE_ADD(months.m, INTERVAL 1 MONTH)
+              AND (? IS NULL OR a.shelter_id = ?)
+       GROUP BY months.m
+       ORDER BY months.m
+
+  [jdbc.query]  applicationsByStatus()
+
+      SELECT s.label AS name, COUNT(app.id) AS value
+        FROM (          SELECT 'Approved'  AS label, 'APPROVED'  AS code
+              UNION ALL SELECT 'Pending',           'PENDING'
+              UNION ALL SELECT 'Rejected',          'REJECTED'
+              UNION ALL SELECT 'Withdrawn',         'WITHDRAWN') s
+        LEFT JOIN (adoption_applications app
+                   JOIN pets p ON p.id = app.pet_id)
+               ON app.status = s.code
+              AND app.submitted_at >= ?
+              AND (? IS NULL OR p.shelter_id = ?)
+       GROUP BY s.label, s.code
+       ORDER BY FIELD(s.code, 'APPROVED','PENDING','REJECTED','WITHDRAWN')
+
+  [jdbc.query]  adoptionsByShelter()
+
+      SELECT sh.name AS shelter, COUNT(a.id) AS adoptions
+        FROM shelters sh
+        LEFT JOIN adoptions a
+               ON a.shelter_id = sh.id AND a.adopted_on >= ?
+       GROUP BY sh.id, sh.name
+       ORDER BY adoptions DESC, sh.name
+
+  [jdbc.query]  petsBySpecies()
+
+      SELECT p.species,
+             SUM(p.status = 'AVAILABLE')   AS available,
+             SUM(p.status = 'PENDING')     AS pending,
+             SUM(p.status = 'ADOPTED')     AS adopted,
+             SUM(p.status = 'UNAVAILABLE') AS unavailable
+        FROM pets p
+       WHERE p.shelter_id IS NOT NULL
+         AND (? IS NULL OR p.shelter_id = ?)
+       GROUP BY p.species
+       ORDER BY p.species
+
+  [jdbc.query]  adoptionRecords()
+
+      SELECT a.id, p.name AS pet, sh.name AS shelter, u.full_name AS adopter,
+             a.adopted_on AS adopted_on, a.fee_paid,
+             -- CAN COME OUT NEGATIVE, AND IS NOT CLAMPED HERE.
+             -- Nothing stops an adoption being dated before the
+             -- application it came from: a CHECK cannot span two
+             -- tables in MySQL, so the ordering is a service-level
+             -- invariant at adoption time and not a guarantee this
+             -- query may lean on. GREATEST(...,0) would turn a
+             -- data-entry error into a plausible "0 days" and hide
+             -- it forever; the real figure travels, and the table
+             -- renders anything negative as "--".
+             DATEDIFF(a.adopted_on, DATE(app.submitted_at)) AS days
+        FROM adoptions a
+        JOIN pets p                    ON p.id   = a.pet_id
+        JOIN shelters sh               ON sh.id  = a.shelter_id
+        JOIN users u                   ON u.id   = a.adopter_id
+        JOIN adoption_applications app ON app.id = a.application_id
+       WHERE a.adopted_on >= ?
+         AND (? IS NULL OR a.shelter_id = ?)
+       ORDER BY a.adopted_on DESC, a.id DESC
+       LIMIT 25
+
+  [jdbc.queryForObject]  overview()
+
+      SELECT COUNT(*) FROM shelters WHERE id = ?
+
+  [jdbc.queryForObject]  decision()
+
+      SELECT SUM(app.status = 'APPROVED')                       AS approved,
+             SUM(app.status IN ('APPROVED','REJECTED'))         AS decided
+        FROM adoption_applications app
+        JOIN pets p ON p.id = app.pet_id
+       WHERE app.submitted_at >= ?
+
+====================================================================================================
+ MODULE: application   (4 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ application/ApplicationService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  mine()
+
+      SELECT  a.id, a.pet_id, p.name AS pet_name, p.breed AS pet_breed, p.status AS pet_status,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              p.shelter_id, s.name AS shelter_name,
+              a.applicant_id, a.applicant_name, a.applicant_email, a.applicant_phone,
+              a.applicant_address, a.applicant_city, a.home_type, a.time_at_home,
+              a.pet_experience, a.household_note, a.quiz_score,
+              q.max_score AS quiz_max_score, q.passed AS quiz_passed,
+              a.status, a.submitted_at, r.full_name AS reviewed_by_name, a.reviewed_at,
+              a.decline_reason_code, a.decline_message,
+              ad.adopted_on, ad.fee_paid
+      FROM        adoption_applications a
+      JOIN        pets          p ON p.id = a.pet_id
+      JOIN        shelters      s ON s.id = p.shelter_id
+      JOIN        quiz_attempts q ON q.id = a.eligibility_attempt_id
+      LEFT JOIN   users         r ON r.id = a.reviewed_by
+      -- Cannot fan the result out: uq_adoption_application is UNIQUE on
+      -- application_id, so this LEFT JOIN matches at most one row.
+      LEFT JOIN   adoptions    ad ON ad.application_id = a.id
+      WHERE a.applicant_id = ? ORDER BY a.submitted_at DESC
+
+  [jdbc.query]  forShelter()
+
+      SELECT  a.id, a.pet_id, p.name AS pet_name, p.breed AS pet_breed, p.status AS pet_status,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              p.shelter_id, s.name AS shelter_name,
+              a.applicant_id, a.applicant_name, a.applicant_email, a.applicant_phone,
+              a.applicant_address, a.applicant_city, a.home_type, a.time_at_home,
+              a.pet_experience, a.household_note, a.quiz_score,
+              q.max_score AS quiz_max_score, q.passed AS quiz_passed,
+              a.status, a.submitted_at, r.full_name AS reviewed_by_name, a.reviewed_at,
+              a.decline_reason_code, a.decline_message,
+              ad.adopted_on, ad.fee_paid
+      FROM        adoption_applications a
+      JOIN        pets          p ON p.id = a.pet_id
+      JOIN        shelters      s ON s.id = p.shelter_id
+      JOIN        quiz_attempts q ON q.id = a.eligibility_attempt_id
+      LEFT JOIN   users         r ON r.id = a.reviewed_by
+      -- Cannot fan the result out: uq_adoption_application is UNIQUE on
+      -- application_id, so this LEFT JOIN matches at most one row.
+      LEFT JOIN   adoptions    ad ON ad.application_id = a.id
+      WHERE (? IS NULL OR p.shelter_id = ?)
+      ORDER BY FIELD(a.status,'PENDING','APPROVED','REJECTED','WITHDRAWN'),
+               a.submitted_at
+
+  [jdbc.query]  row()
+
+      SELECT  a.id, a.pet_id, p.name AS pet_name, p.breed AS pet_breed, p.status AS pet_status,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              p.shelter_id, s.name AS shelter_name,
+              a.applicant_id, a.applicant_name, a.applicant_email, a.applicant_phone,
+              a.applicant_address, a.applicant_city, a.home_type, a.time_at_home,
+              a.pet_experience, a.household_note, a.quiz_score,
+              q.max_score AS quiz_max_score, q.passed AS quiz_passed,
+              a.status, a.submitted_at, r.full_name AS reviewed_by_name, a.reviewed_at,
+              a.decline_reason_code, a.decline_message,
+              ad.adopted_on, ad.fee_paid
+      FROM        adoption_applications a
+      JOIN        pets          p ON p.id = a.pet_id
+      JOIN        shelters      s ON s.id = p.shelter_id
+      JOIN        quiz_attempts q ON q.id = a.eligibility_attempt_id
+      LEFT JOIN   users         r ON r.id = a.reviewed_by
+      -- Cannot fan the result out: uq_adoption_application is UNIQUE on
+      -- application_id, so this LEFT JOIN matches at most one row.
+      LEFT JOIN   adoptions    ad ON ad.application_id = a.id
+      WHERE a.id = ?
+
+  [jdbc.queryForObject]  counts()
+
+      SELECT  COUNT(*)                     AS total,
+              SUM(a.status = 'PENDING')    AS pending,
+              SUM(a.status = 'APPROVED')   AS approved,
+              SUM(a.status = 'REJECTED')   AS rejected,
+              SUM(a.status = 'WITHDRAWN')  AS withdrawn
+      FROM       adoption_applications a
+      JOIN       pets p ON p.id = a.pet_id
+      WHERE      (? IS NULL OR p.shelter_id = ?)
+
+====================================================================================================
+ MODULE: boarding   (9 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ boarding/BoardingRequestRepository.java
+----------------------------------------------------------------------------------------------------
+
+  [@Query]  lockOverlappingForPet()
+
+      SELECT b FROM BoardingRequest b
+       WHERE b.petId = :petId
+         AND b.status IN (com.pawhome.backend.boarding.BoardingStatus.ACCEPTED,
+                          com.pawhome.backend.boarding.BoardingStatus.ACTIVE)
+         AND b.startDate <= :end
+         AND b.endDate   >= :start
+       ORDER BY b.startDate
+
+  [@Query]  lockOverlappingForSuite()
+
+      SELECT b FROM BoardingRequest b
+       WHERE b.suiteId = :suiteId
+         AND b.status IN (com.pawhome.backend.boarding.BoardingStatus.ACCEPTED,
+                          com.pawhome.backend.boarding.BoardingStatus.ACTIVE)
+         AND b.startDate <= :end
+         AND b.endDate   >= :start
+
+  [@Query]  suiteLoads()                                                  [V16]
+
+      Replaced busySuiteIds(), which returned the ids of suites that had
+      ANYBODY in them. That was the right question only while a room held one
+      animal; since V16 the dialog needs a fraction, because one dog in a
+      four-place kennel leaves it perfectly offerable.
+
+      Native rather than JPQL: it counts rows in two other tables against a
+      column in shelter_suites, and BoardingRequest.suiteId is a plain Long by
+      this project's convention, so there is no association for JPQL to walk.
+      The aliases are camelCase because a native query backing an interface
+      projection is matched by ResultSet column LABEL.
+
+      Daycare is counted for TODAY ONLY, and only when the requested range
+      covers today -- there is no attendance row for a day that has not
+      happened, and inventing one would have a Tuesday cat blocking a room for
+      all of March. So the figure is exact for today and a LOWER BOUND
+      further out, which is the right way round: it can only understate.
+
+      SELECT     su.id AS suiteId,
+                 su.capacity AS capacity,
+                 ((SELECT COUNT(*)
+                     FROM boarding_requests b
+                    WHERE b.suite_id = su.id
+                      AND b.status IN ('ACCEPTED','ACTIVE')
+                      AND b.start_date <= :end
+                      AND b.end_date   >= :start)
+                + (SELECT COUNT(*)
+                     FROM daycare_attendance a
+                    WHERE a.suite_id        = su.id
+                      AND a.visit_date      = CURDATE()
+                      AND a.checked_out_at IS NULL
+                      AND CURDATE() BETWEEN :start AND :end)) AS placesUsed
+      FROM       shelter_suites su
+      WHERE      su.shelter_id = :shelterId
+
+  [@Query]  countPlacesHeld()                                             [V16]
+
+      THE BUILDING, NOT A ROOM. suiteLoads asks "is there space in Cat Loft
+      A"; this asks "is there space in the shelter at all" -- a different
+      refusal with a different remedy. One says pick another room; the other
+      says decline the request, which DeclineReason.NO_CAPACITY has been able
+      to say since V1.
+
+      DAYCARE PETS ARE DELIBERATELY NOT COUNTED. shelters.capacity counts
+      KENNEL PLACES -- somewhere to sleep -- and a daycare pet goes home at
+      three and needs none. That is the distinction V13 drew when it refused
+      to reuse shelters.capacity for daycare_slot_capacity.
+
+      No FROM clause: two scalar subqueries added together is a complete
+      SELECT in MySQL. Unlocked, and the caller is what makes it safe --
+      accept() holds ShelterRepository.lockById first.
+
+      SELECT (SELECT COUNT(*)
+                FROM pets p
+               WHERE p.shelter_id = :shelterId
+                 AND p.status IN ('AVAILABLE','PENDING'))
+           + (SELECT COUNT(*)
+                FROM boarding_requests b
+               WHERE b.shelter_id = :shelterId
+                 AND b.status IN ('ACCEPTED','ACTIVE')
+                 AND b.start_date <= :end
+                 AND b.end_date   >= :start)
+
+----------------------------------------------------------------------------------------------------
+ boarding/BoardingService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  mine()
+
+      SELECT  b.id, b.pet_id, p.name AS pet_name, p.breed AS pet_breed,
+              p.species AS pet_species,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              b.owner_id, o.full_name AS owner_name, o.email AS owner_email,
+              b.shelter_id, s.name AS shelter_name, s.address_line AS shelter_address,
+              s.phone AS shelter_phone,
+              b.suite_id, su.name AS suite_name,
+              b.start_date, b.end_date, b.status,
+              b.emergency_contact, b.vet_care_authorised,
+              b.daily_rate, b.estimated_cost, b.requested_at,
+              r.full_name AS reviewed_by_name, b.reviewed_at, b.decline_message,
+              q.score AS quiz_score, q.max_score AS quiz_max_score, q.passed AS quiz_passed
+      FROM        boarding_requests b
+      JOIN        pets           p  ON p.id  = b.pet_id
+      JOIN        users          o  ON o.id  = b.owner_id
+      JOIN        shelters       s  ON s.id  = b.shelter_id
+      LEFT JOIN   shelter_suites su ON su.id = b.suite_id
+      LEFT JOIN   users          r  ON r.id  = b.reviewed_by
+      -- LEFT, because quiz_attempt_id is nullable: V6 notes a request may
+      -- predate the quiz, and an inner join would hide those rows entirely.
+      LEFT JOIN   quiz_attempts  q  ON q.id  = b.quiz_attempt_id
+      WHERE b.owner_id = ? ORDER BY b.start_date DESC
+
+  [jdbc.query]  forShelter()
+
+      SELECT  b.id, b.pet_id, p.name AS pet_name, p.breed AS pet_breed,
+              p.species AS pet_species,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              b.owner_id, o.full_name AS owner_name, o.email AS owner_email,
+              b.shelter_id, s.name AS shelter_name, s.address_line AS shelter_address,
+              s.phone AS shelter_phone,
+              b.suite_id, su.name AS suite_name,
+              b.start_date, b.end_date, b.status,
+              b.emergency_contact, b.vet_care_authorised,
+              b.daily_rate, b.estimated_cost, b.requested_at,
+              r.full_name AS reviewed_by_name, b.reviewed_at, b.decline_message,
+              q.score AS quiz_score, q.max_score AS quiz_max_score, q.passed AS quiz_passed
+      FROM        boarding_requests b
+      JOIN        pets           p  ON p.id  = b.pet_id
+      JOIN        users          o  ON o.id  = b.owner_id
+      JOIN        shelters       s  ON s.id  = b.shelter_id
+      LEFT JOIN   shelter_suites su ON su.id = b.suite_id
+      LEFT JOIN   users          r  ON r.id  = b.reviewed_by
+      -- LEFT, because quiz_attempt_id is nullable: V6 notes a request may
+      -- predate the quiz, and an inner join would hide those rows entirely.
+      LEFT JOIN   quiz_attempts  q  ON q.id  = b.quiz_attempt_id
+      WHERE (? IS NULL OR b.shelter_id = ?)
+      ORDER BY FIELD(b.status,'REQUESTED','ACTIVE','ACCEPTED','COMPLETED',
+                              'DECLINED','CANCELLED'),
+               b.start_date
+
+  [jdbc.query]  detail()
+
+      SELECT u.id, u.update_type, u.note, u.photo_path, u.posted_at,
+             a.full_name AS posted_by_name
+        FROM boarding_updates u
+        JOIN users a ON a.id = u.posted_by
+      WHERE u.boarding_id = ? ORDER BY u.posted_at DESC, u.id DESC
+
+  [jdbc.query]  row()
+
+      SELECT  b.id, b.pet_id, p.name AS pet_name, p.breed AS pet_breed,
+              p.species AS pet_species,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              b.owner_id, o.full_name AS owner_name, o.email AS owner_email,
+              b.shelter_id, s.name AS shelter_name, s.address_line AS shelter_address,
+              s.phone AS shelter_phone,
+              b.suite_id, su.name AS suite_name,
+              b.start_date, b.end_date, b.status,
+              b.emergency_contact, b.vet_care_authorised,
+              b.daily_rate, b.estimated_cost, b.requested_at,
+              r.full_name AS reviewed_by_name, b.reviewed_at, b.decline_message,
+              q.score AS quiz_score, q.max_score AS quiz_max_score, q.passed AS quiz_passed
+      FROM        boarding_requests b
+      JOIN        pets           p  ON p.id  = b.pet_id
+      JOIN        users          o  ON o.id  = b.owner_id
+      JOIN        shelters       s  ON s.id  = b.shelter_id
+      LEFT JOIN   shelter_suites su ON su.id = b.suite_id
+      LEFT JOIN   users          r  ON r.id  = b.reviewed_by
+      -- LEFT, because quiz_attempt_id is nullable: V6 notes a request may
+      -- predate the quiz, and an inner join would hide those rows entirely.
+      LEFT JOIN   quiz_attempts  q  ON q.id  = b.quiz_attempt_id
+      WHERE b.id = ?
+
+  [jdbc.queryForObject]  counts()
+
+      SELECT SUM(b.status = 'REQUESTED')                        AS requested,
+             SUM(b.status = 'ACTIVE')                           AS active,
+             SUM(b.status = 'ACTIVE' AND b.end_date = CURDATE()) AS departing,
+             SUM(b.status = 'COMPLETED')                        AS completed
+        FROM boarding_requests b
+       WHERE (? IS NULL OR b.shelter_id = ?)
+
+  [jdbc.queryForObject]  updateRow()
+
+      SELECT u.id, u.update_type, u.note, u.photo_path, u.posted_at,
+             a.full_name AS posted_by_name
+        FROM boarding_updates u
+        JOIN users a ON a.id = u.posted_by
+      WHERE u.id = ?
+
+====================================================================================================
+ MODULE: care   (8 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ care/CareDueJob.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.queryForList]  announceDueTasks()
+
+      SELECT  t.id, t.description, t.priority, t.assigned_to,
+              p.name       AS pet_name,
+              p.shelter_id AS shelter_id
+        FROM  care_tasks t
+        JOIN  pets p ON p.id = t.pet_id
+       WHERE  t.status          = 'PENDING'
+         AND  t.due_at          < NOW()
+         -- V12: the guard that makes this run once per deadline
+         -- rather than once per sweep, for ever.
+         AND  t.due_notified_at IS NULL
+
+  [jdbc.update]  announceDueTasks()
+
+      UPDATE care_tasks SET due_notified_at = NOW() WHERE id = ?
+
+----------------------------------------------------------------------------------------------------
+ care/CareService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  tasks()
+
+      SELECT  t.id, t.pet_id, p.name AS pet_name,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              t.boarding_id, t.task_type, t.description, t.due_at, t.priority, t.status,
+              t.assigned_to, a.full_name AS assigned_to_name,
+              c.full_name AS completed_by_name, t.completed_at,
+              (t.status = 'PENDING' AND t.due_at < NOW()) AS overdue
+      FROM        care_tasks t
+      JOIN        pets  p ON p.id = t.pet_id
+      LEFT JOIN   users a ON a.id = t.assigned_to
+      LEFT JOIN   users c ON c.id = t.completed_by
+      WHERE (? IS NULL OR p.shelter_id = ?)
+      ORDER BY FIELD(t.status,'PENDING','SKIPPED','DONE'),
+               t.priority = 'CRITICAL' DESC,
+               t.due_at
+
+  [jdbc.query]  logs()
+
+      SELECT  l.id, l.pet_id, p.name AS pet_name, l.task_id, l.task_type,
+              l.notes, l.logged_at, u.full_name AS logged_by_name
+      FROM        care_logs l
+      JOIN        pets  p ON p.id = l.pet_id
+      JOIN        users u ON u.id = l.logged_by
+      WHERE (? IS NULL OR p.shelter_id = ?)
+      ORDER BY l.logged_at DESC, l.id DESC
+
+  [jdbc.query]  colleagues()
+
+      SELECT id, full_name FROM users
+       WHERE role = 'STAFF' AND is_active = TRUE AND approval_status = 'APPROVED'
+         AND (? IS NULL OR shelter_id = ?)
+       ORDER BY full_name
+
+  [jdbc.queryForObject]  counts()
+
+      SELECT SUM(t.status = 'PENDING')                             AS pending,
+             SUM(t.status = 'PENDING' AND t.due_at < NOW())        AS overdue,
+             SUM(t.status = 'PENDING' AND t.priority = 'CRITICAL') AS critical,
+             SUM(t.status = 'DONE'
+                 AND DATE(t.completed_at) = CURDATE())             AS done_today
+        FROM care_tasks t
+        JOIN pets p ON p.id = t.pet_id
+       WHERE (? IS NULL OR p.shelter_id = ?)
+
+  [jdbc.queryForObject]  requireColleague()
+
+      SELECT COUNT(*) FROM users
+       WHERE id = ? AND role = 'STAFF' AND shelter_id = ?
+         AND is_active = TRUE AND approval_status = 'APPROVED'
+
+  [jdbc.queryForList]  openBoardingFor()
+
+      SELECT id FROM boarding_requests
+       WHERE pet_id = ? AND status = 'ACTIVE'
+       ORDER BY start_date DESC LIMIT 1
+
+====================================================================================================
+ MODULE: health   (3 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ health/VaccinationService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  forShelter()
+
+      SELECT  v.id, v.pet_id, p.name AS pet_name,
+              v.vaccine_type_id, vt.name AS vaccine_name,
+              v.administered_on, v.next_due_on, v.administered_by, v.batch_lot,
+              v.status, v.certificate_path, v.notes,
+              r.full_name AS recorded_by_name,
+              (v.status = 'SCHEDULED' AND v.next_due_on < CURDATE()) AS overdue
+      FROM        vaccinations  v
+      JOIN        pets          p  ON p.id  = v.pet_id
+      JOIN        vaccine_types vt ON vt.id = v.vaccine_type_id
+      JOIN        users         r  ON r.id  = v.recorded_by
+      WHERE p.shelter_id IS NOT NULL AND (? IS NULL OR p.shelter_id = ?)
+      ORDER BY v.status DESC, v.next_due_on IS NULL, v.next_due_on, v.id DESC
+
+  [jdbc.query]  rows()
+
+      SELECT  v.id, v.pet_id, p.name AS pet_name,
+              v.vaccine_type_id, vt.name AS vaccine_name,
+              v.administered_on, v.next_due_on, v.administered_by, v.batch_lot,
+              v.status, v.certificate_path, v.notes,
+              r.full_name AS recorded_by_name,
+              (v.status = 'SCHEDULED' AND v.next_due_on < CURDATE()) AS overdue
+      FROM        vaccinations  v
+      JOIN        pets          p  ON p.id  = v.pet_id
+      JOIN        vaccine_types vt ON vt.id = v.vaccine_type_id
+      JOIN        users         r  ON r.id  = v.recorded_by
+      WHERE v.pet_id = ? ORDER BY v.administered_on DESC, v.id DESC
+
+  [jdbc.queryForObject]  vaccinated()
+
+      SELECT (    EXISTS (SELECT 1 FROM vaccinations v
+                           WHERE v.pet_id = ? AND v.status = 'COMPLETED')
+              AND NOT EXISTS (SELECT 1 FROM vaccinations v2
+                               WHERE v2.pet_id = ?
+                                 AND v2.status = 'SCHEDULED'
+                                 AND v2.next_due_on < CURDATE()))
+
+====================================================================================================
+ MODULE: mail   (3 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ mail/HealthReminderJob.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.queryForList]  run()
+
+      SELECT  v.id            AS vaccination_id,
+              p.name          AS pet_name,
+              u.full_name     AS owner_name,
+              u.email         AS owner_email,
+              vt.name         AS vaccine_name,
+              v.next_due_on   AS due_on,
+              s.name          AS shelter_name
+      FROM        vaccinations  v
+      JOIN        pets          p  ON p.id  = v.pet_id
+      -- INNER JOIN through owner_id: a pet with no owner is still in the
+      -- shelter, and there is nobody to email about it.
+      JOIN        users         u  ON u.id  = p.owner_id
+      JOIN        vaccine_types vt ON vt.id = v.vaccine_type_id
+      LEFT JOIN   shelters      s  ON s.id  = p.shelter_id
+      WHERE   v.next_due_on IS NOT NULL
+        AND   v.status = 'SCHEDULED'
+        AND   %s
+        -- Only people who confirmed their address and are still active.
+        AND   u.email_verified = TRUE
+        AND   u.is_active      = TRUE
+        -- V10's switches, and this is the one that makes them real.
+        -- notify_health is the topic; notify_email is the channel, so
+        -- turning either off stops this mail -- and the settings page
+        -- stops being a row of switches wired to nothing.
+        AND   u.notify_health  = TRUE
+        AND   u.notify_email   = TRUE
+        -- The idempotence guard: skip anything already sent.
+        AND   NOT EXISTS (SELECT 1 FROM health_reminders_sent r
+                          WHERE r.vaccination_id = v.id
+                            AND r.reminder_kind  = ?)
+
+  [jdbc.queryForList]  run()
+
+      SELECT  v.id            AS vaccination_id,
+              p.name          AS pet_name,
+              u.full_name     AS owner_name,
+              u.email         AS owner_email,
+              vt.name         AS vaccine_name,
+              v.next_due_on   AS due_on,
+              s.name          AS shelter_name
+      FROM        vaccinations  v
+      JOIN        pets          p  ON p.id  = v.pet_id
+      -- INNER JOIN through owner_id: a pet with no owner is still in the
+      -- shelter, and there is nobody to email about it.
+      JOIN        users         u  ON u.id  = p.owner_id
+      JOIN        vaccine_types vt ON vt.id = v.vaccine_type_id
+      LEFT JOIN   shelters      s  ON s.id  = p.shelter_id
+      WHERE   v.next_due_on IS NOT NULL
+        AND   v.status = 'SCHEDULED'
+        AND   %s
+        -- Only people who confirmed their address and are still active.
+        AND   u.email_verified = TRUE
+        AND   u.is_active      = TRUE
+        -- V10's switches, and this is the one that makes them real.
+        -- notify_health is the topic; notify_email is the channel, so
+        -- turning either off stops this mail -- and the settings page
+        -- stops being a row of switches wired to nothing.
+        AND   u.notify_health  = TRUE
+        AND   u.notify_email   = TRUE
+        -- The idempotence guard: skip anything already sent.
+        AND   NOT EXISTS (SELECT 1 FROM health_reminders_sent r
+                          WHERE r.vaccination_id = v.id
+                            AND r.reminder_kind  = ?)
+
+  [jdbc.update]  run()
+
+      INSERT IGNORE INTO health_reminders_sent
+          (vaccination_id, reminder_kind, sent_to)
+      VALUES (?, ?, ?)
+
+====================================================================================================
+ MODULE: notification   (2 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ notification/NotificationRepository.java
+----------------------------------------------------------------------------------------------------
+
+  [@Query]  markAllRead()
+
+      UPDATE Notification n SET n.readAt = :now  WHERE n.userId = :userId AND n.readAt IS NULL
+
+----------------------------------------------------------------------------------------------------
+ notification/NotificationService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.queryForList]  raiseForShelterStaff()
+
+      SELECT id FROM users
+       WHERE role = 'STAFF' AND shelter_id = ?
+         AND is_active = TRUE AND approval_status = 'APPROVED'
+
+====================================================================================================
+ MODULE: pet   (17 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ pet/FavoriteService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.queryForObject]  add()
+
+      SELECT EXISTS (SELECT 1 FROM pets WHERE id = ?)
+
+  [jdbc.update]  add()
+
+      INSERT IGNORE INTO favorites (user_id, pet_id) VALUES (?, ?)
+
+  [jdbc.update]  remove()
+
+      DELETE FROM favorites WHERE user_id = ? AND pet_id = ?
+
+----------------------------------------------------------------------------------------------------
+ pet/PetService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  list()
+
+      SELECT  p.id, p.shelter_id, s.name AS shelter_name, p.name, p.species,
+              p.breed, p.age_value, p.age_unit, p.sex, p.size, p.weight_kg,
+              p.status, p.owner_id, p.description, p.is_neutered,
+              p.is_microchipped, p.adoption_fee, p.view_count, p.created_at,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE
+                LIMIT 1)                                        AS cover_photo_path,
+              (SELECT COUNT(*) FROM pet_photos ph
+                WHERE ph.pet_id = p.id)                         AS photo_count,
+              (SELECT GROUP_CONCAT(pt.trait_id ORDER BY pt.trait_id)
+                 FROM pet_traits pt WHERE pt.pet_id = p.id)     AS trait_ids,
+              (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR '||')
+                 FROM pet_traits pt JOIN traits t ON t.id = pt.trait_id
+                WHERE pt.pet_id = p.id)                         AS trait_labels,
+              (SELECT COUNT(*) FROM adoption_applications a
+                WHERE a.pet_id = p.id)                          AS application_count,
+              -- The three tables that reference a pet ON DELETE RESTRICT,
+              -- as one number. Every other table pointing at a pet cascades:
+              -- photos, traits, favourites, care logs, care tasks and
+              -- vaccinations all belong to the animal and go with it.
+              ((SELECT COUNT(*) FROM adoption_applications a WHERE a.pet_id = p.id)
+             + (SELECT COUNT(*) FROM adoptions ad           WHERE ad.pet_id = p.id)
+             + (SELECT COUNT(*) FROM boarding_requests b    WHERE b.pet_id = p.id))
+                                                                AS blocking_count
+      FROM       pets     p
+      -- INNER, and load-bearing since V9. shelter_id is nullable now and a
+      -- NULL means a household pet, so this join is what keeps somebody's own
+      -- dog out of a shelter's Manage Pets list. Change it to a LEFT JOIN and
+      -- every staff member starts seeing every customer's animals.
+      JOIN       shelters s ON s.id = p.shelter_id
+      WHERE (? IS NULL OR p.shelter_id = ?)
+      ORDER BY p.created_at DESC
+
+  [jdbc.query]  browse()
+
+      SELECT  p.id, p.name, p.species, p.breed, p.age_value, p.age_unit, p.sex,
+              p.size, p.weight_kg, p.status, p.description, p.is_neutered,
+              p.is_microchipped, p.adoption_fee,
+              s.name AS shelter_name, s.city AS shelter_city, s.state AS shelter_state,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS cover_photo_path,
+              (SELECT GROUP_CONCAT(ph.file_path ORDER BY ph.is_cover DESC, ph.sort_order
+                      SEPARATOR '||')
+                 FROM pet_photos ph WHERE ph.pet_id = p.id)            AS photo_paths,
+              (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR '||')
+                 FROM pet_traits pt JOIN traits t ON t.id = pt.trait_id
+                WHERE pt.pet_id = p.id)                                AS trait_labels,
+              -- Saved by the viewer. ONE placeholder, and it comes before
+              -- every WHERE parameter, so callers pass viewerId first.
+              --
+              -- `<=>` is MySQL's null-safe equality. It is NOT load-bearing
+              -- here and the comment that said so was wrong: with a NULL
+              -- viewer id, plain `=` yields NULL for every row, the subquery
+              -- returns none, and EXISTS is FALSE -- the right answer. Both
+              -- spellings were run against a real database and both give 0
+              -- for an anonymous caller.
+              --
+              -- It stays because it says "a null viewer matches nobody" in
+              -- the operator instead of leaving it to three-valued logic to
+              -- collapse the right way, which is the sort of thing that is
+              -- correct until someone rewrites the subquery as a LEFT JOIN.
+              EXISTS (SELECT 1 FROM favorites f
+                       WHERE f.pet_id = p.id AND f.user_id <=> ?)      AS favorite
+      FROM       pets     p
+      -- INNER, and load-bearing since V9 -- see the note on SELECT_ROW. Here
+      -- it is the stronger guarantee of the two: this projection feeds the
+      -- PUBLIC browse page, so a LEFT JOIN would put private household pets
+      -- on the open catalogue.
+      JOIN       shelters s ON s.id = p.shelter_id
+      WHERE p.status = 'AVAILABLE'
+        AND (? IS NULL OR p.species = ?)
+      ORDER BY p.created_at DESC
+
+  [jdbc.query]  favorites()
+
+      SELECT  p.id, p.name, p.species, p.breed, p.age_value, p.age_unit, p.sex,
+              p.size, p.weight_kg, p.status, p.description, p.is_neutered,
+              p.is_microchipped, p.adoption_fee,
+              s.name AS shelter_name, s.city AS shelter_city, s.state AS shelter_state,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS cover_photo_path,
+              (SELECT GROUP_CONCAT(ph.file_path ORDER BY ph.is_cover DESC, ph.sort_order
+                      SEPARATOR '||')
+                 FROM pet_photos ph WHERE ph.pet_id = p.id)            AS photo_paths,
+              (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR '||')
+                 FROM pet_traits pt JOIN traits t ON t.id = pt.trait_id
+                WHERE pt.pet_id = p.id)                                AS trait_labels,
+              -- Saved by the viewer. ONE placeholder, and it comes before
+              -- every WHERE parameter, so callers pass viewerId first.
+              --
+              -- `<=>` is MySQL's null-safe equality. It is NOT load-bearing
+              -- here and the comment that said so was wrong: with a NULL
+              -- viewer id, plain `=` yields NULL for every row, the subquery
+              -- returns none, and EXISTS is FALSE -- the right answer. Both
+              -- spellings were run against a real database and both give 0
+              -- for an anonymous caller.
+              --
+              -- It stays because it says "a null viewer matches nobody" in
+              -- the operator instead of leaving it to three-valued logic to
+              -- collapse the right way, which is the sort of thing that is
+              -- correct until someone rewrites the subquery as a LEFT JOIN.
+              EXISTS (SELECT 1 FROM favorites f
+                       WHERE f.pet_id = p.id AND f.user_id <=> ?)      AS favorite
+      FROM       pets     p
+      -- INNER, and load-bearing since V9 -- see the note on SELECT_ROW. Here
+      -- it is the stronger guarantee of the two: this projection feeds the
+      -- PUBLIC browse page, so a LEFT JOIN would put private household pets
+      -- on the open catalogue.
+      JOIN       shelters s ON s.id = p.shelter_id
+      JOIN favorites fav ON fav.pet_id = p.id AND fav.user_id = ?
+      ORDER BY fav.created_at DESC
+
+  [jdbc.query]  publicPet()
+
+      SELECT  p.id, p.name, p.species, p.breed, p.age_value, p.age_unit, p.sex,
+              p.size, p.weight_kg, p.status, p.description, p.is_neutered,
+              p.is_microchipped, p.adoption_fee,
+              s.name AS shelter_name, s.city AS shelter_city, s.state AS shelter_state,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS cover_photo_path,
+              (SELECT GROUP_CONCAT(ph.file_path ORDER BY ph.is_cover DESC, ph.sort_order
+                      SEPARATOR '||')
+                 FROM pet_photos ph WHERE ph.pet_id = p.id)            AS photo_paths,
+              (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR '||')
+                 FROM pet_traits pt JOIN traits t ON t.id = pt.trait_id
+                WHERE pt.pet_id = p.id)                                AS trait_labels,
+              -- Saved by the viewer. ONE placeholder, and it comes before
+              -- every WHERE parameter, so callers pass viewerId first.
+              --
+              -- `<=>` is MySQL's null-safe equality. It is NOT load-bearing
+              -- here and the comment that said so was wrong: with a NULL
+              -- viewer id, plain `=` yields NULL for every row, the subquery
+              -- returns none, and EXISTS is FALSE -- the right answer. Both
+              -- spellings were run against a real database and both give 0
+              -- for an anonymous caller.
+              --
+              -- It stays because it says "a null viewer matches nobody" in
+              -- the operator instead of leaving it to three-valued logic to
+              -- collapse the right way, which is the sort of thing that is
+              -- correct until someone rewrites the subquery as a LEFT JOIN.
+              EXISTS (SELECT 1 FROM favorites f
+                       WHERE f.pet_id = p.id AND f.user_id <=> ?)      AS favorite
+      FROM       pets     p
+      -- INNER, and load-bearing since V9 -- see the note on SELECT_ROW. Here
+      -- it is the stronger guarantee of the two: this projection feeds the
+      -- PUBLIC browse page, so a LEFT JOIN would put private household pets
+      -- on the open catalogue.
+      JOIN       shelters s ON s.id = p.shelter_id
+      WHERE p.id = ?
+
+  [jdbc.query]  withMatch()
+
+      SELECT pt.pet_id,
+             GROUP_CONCAT(va.trait_label ORDER BY va.trait_label SEPARATOR '||') AS shared
+        FROM v_adopter_traits va
+        JOIN pet_traits pt ON pt.trait_id = va.trait_id
+       WHERE va.user_id = ? AND pt.pet_id IN (%s)
+       GROUP BY pt.pet_id
+
+  [jdbc.query]  myPets()
+
+      SELECT  p.id, p.name, p.species, p.breed, p.age_value, p.age_unit,
+              p.sex, p.size, p.weight_kg, p.status, p.description,
+              p.is_neutered, p.is_microchipped,
+              p.shelter_id, s.name AS shelter_name,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE
+                LIMIT 1)                                        AS cover_photo_path
+      FROM       pets     p
+      LEFT JOIN  shelters s ON s.id = p.shelter_id
+      WHERE p.owner_id = ? ORDER BY p.name
+
+  [jdbc.query]  row()
+
+      SELECT  p.id, p.shelter_id, s.name AS shelter_name, p.name, p.species,
+              p.breed, p.age_value, p.age_unit, p.sex, p.size, p.weight_kg,
+              p.status, p.owner_id, p.description, p.is_neutered,
+              p.is_microchipped, p.adoption_fee, p.view_count, p.created_at,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE
+                LIMIT 1)                                        AS cover_photo_path,
+              (SELECT COUNT(*) FROM pet_photos ph
+                WHERE ph.pet_id = p.id)                         AS photo_count,
+              (SELECT GROUP_CONCAT(pt.trait_id ORDER BY pt.trait_id)
+                 FROM pet_traits pt WHERE pt.pet_id = p.id)     AS trait_ids,
+              (SELECT GROUP_CONCAT(t.label ORDER BY t.label SEPARATOR '||')
+                 FROM pet_traits pt JOIN traits t ON t.id = pt.trait_id
+                WHERE pt.pet_id = p.id)                         AS trait_labels,
+              (SELECT COUNT(*) FROM adoption_applications a
+                WHERE a.pet_id = p.id)                          AS application_count,
+              -- The three tables that reference a pet ON DELETE RESTRICT,
+              -- as one number. Every other table pointing at a pet cascades:
+              -- photos, traits, favourites, care logs, care tasks and
+              -- vaccinations all belong to the animal and go with it.
+              ((SELECT COUNT(*) FROM adoption_applications a WHERE a.pet_id = p.id)
+             + (SELECT COUNT(*) FROM adoptions ad           WHERE ad.pet_id = p.id)
+             + (SELECT COUNT(*) FROM boarding_requests b    WHERE b.pet_id = p.id))
+                                                                AS blocking_count
+      FROM       pets     p
+      -- INNER, and load-bearing since V9. shelter_id is nullable now and a
+      -- NULL means a household pet, so this join is what keeps somebody's own
+      -- dog out of a shelter's Manage Pets list. Change it to a LEFT JOIN and
+      -- every staff member starts seeing every customer's animals.
+      JOIN       shelters s ON s.id = p.shelter_id
+      WHERE p.id = ?
+
+  [jdbc.queryForObject]  counts()
+
+      SELECT  COUNT(*)                      AS total,
+              SUM(status = 'AVAILABLE')     AS available,
+              SUM(status = 'PENDING')       AS pending,
+              SUM(status = 'ADOPTED')       AS adopted,
+              SUM(status = 'BOARDING')      AS boarding,
+              SUM(status = 'UNAVAILABLE')   AS unavailable
+      FROM pets WHERE (? IS NULL OR shelter_id = ?)
+
+  [jdbc.queryForObject]  removeMyPet()
+
+      SELECT COUNT(*) FROM boarding_requests WHERE pet_id = ?
+
+  [jdbc.queryForObject]  myPet()
+
+      SELECT  p.id, p.name, p.species, p.breed, p.age_value, p.age_unit,
+              p.sex, p.size, p.weight_kg, p.status, p.description,
+              p.is_neutered, p.is_microchipped,
+              p.shelter_id, s.name AS shelter_name,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE
+                LIMIT 1)                                        AS cover_photo_path
+      FROM       pets     p
+      LEFT JOIN  shelters s ON s.id = p.shelter_id
+      WHERE p.id = ?
+
+  [jdbc.queryForList]  withMatch()
+
+      SELECT trait_label FROM v_adopter_traits WHERE user_id = ? ORDER BY trait_label
+
+  [jdbc.queryForList]  writeTraits()
+
+      SELECT id FROM traits WHERE is_active = TRUE
+
+  [jdbc.update]  writeTraits()
+
+      DELETE FROM pet_traits WHERE pet_id = ?
+
+  [jdbc.batchUpdate]  writeTraits()
+
+      INSERT INTO pet_traits (pet_id, trait_id) VALUES (?, ?)
+
+====================================================================================================
+ MODULE: quiz   (9 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ quiz/QuizOptionRepository.java
+----------------------------------------------------------------------------------------------------
+
+  [@Query]  deleteByQuestionId()
+
+      DELETE FROM QuizOption o WHERE o.questionId = :questionId
+
+----------------------------------------------------------------------------------------------------
+ quiz/QuizService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  list()
+
+      SELECT  q.id, q.quiz_type, q.question_text, q.answer_type, q.category,
+              q.status, q.is_required, q.display_order, q.created_at,
+              (SELECT COUNT(*) FROM quiz_options o
+                WHERE o.question_id = q.id)                    AS option_count,
+              (SELECT COUNT(*) FROM quiz_answers a
+                WHERE a.question_id = q.id)                    AS answered_count
+      FROM        quiz_questions q
+      WHERE       q.quiz_type = ?
+      ORDER BY    q.display_order, q.id
+
+  [jdbc.query]  options()
+
+      SELECT ot.option_id, ot.trait_id
+        FROM option_traits ot
+        JOIN quiz_options o ON o.id = ot.option_id
+       WHERE o.question_id = ?
+
+  [jdbc.queryForObject]  counts()
+
+      SELECT  COUNT(*)                             AS total,
+              SUM(quiz_type = 'ELIGIBILITY')       AS eligibility,
+              SUM(quiz_type = 'PERSONALITY')       AS personality,
+              SUM(quiz_type = 'BOARDING')          AS boarding,
+              SUM(status    = 'ACTIVE')            AS active
+      FROM quiz_questions
+
+  [jdbc.queryForList]  options()
+
+      SELECT DISTINCT a.option_id
+        FROM quiz_answers a
+        JOIN quiz_options o ON o.id = a.option_id
+       WHERE o.question_id = ?
+
+  [jdbc.update]  writeOptions()
+
+      UPDATE quiz_options SET display_order = ? WHERE id = ?
+
+  [jdbc.update]  writeTraits()
+
+      DELETE FROM option_traits WHERE option_id IN (
+
+  [jdbc.batchUpdate]  writeTraits()
+
+      INSERT INTO option_traits (option_id, trait_id) VALUES (?, ?)
+
+----------------------------------------------------------------------------------------------------
+ quiz/QuizTakingService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.queryForList]  myTraits()
+
+      SELECT trait_label FROM v_adopter_traits WHERE user_id = ? ORDER BY trait_label
+
+====================================================================================================
+ MODULE: report   (6 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ report/ReportService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  list()
+
+      SELECT r.id, r.file_name, r.file_path, r.report_type,
+             r.date_from, r.date_to, r.shelter_id,
+             sh.name AS shelter_name, u.full_name AS generated_by_name,
+             r.generated_at
+        FROM reports r
+        LEFT JOIN shelters sh ON sh.id = r.shelter_id
+        LEFT JOIN users u     ON u.id  = r.generated_by
+       ORDER BY r.generated_at DESC, r.id DESC
+
+  [jdbc.query]  adoptionSummary()
+
+      SELECT a.adopted_on, p.name AS pet, p.species, p.breed,
+             sh.name AS shelter, u.full_name AS adopter, u.email,
+             a.fee_paid,
+             DATEDIFF(a.adopted_on, DATE(app.submitted_at)) AS days
+        FROM adoptions a
+        JOIN pets p                    ON p.id   = a.pet_id
+        JOIN shelters sh               ON sh.id  = a.shelter_id
+        JOIN users u                   ON u.id   = a.adopter_id
+        JOIN adoption_applications app ON app.id = a.application_id
+       WHERE a.adopted_on BETWEEN ? AND ?
+         AND (? IS NULL OR a.shelter_id = ?)
+       ORDER BY a.adopted_on, p.name
+
+  [jdbc.query]  shelterEfficiency()
+
+      SELECT sh.name AS shelter, sh.city, sh.capacity,
+             (SELECT COUNT(*) FROM pets p2
+               WHERE p2.shelter_id = sh.id)                     AS pets_held,
+             COUNT(app.id)                                      AS applications,
+             SUM(app.status = 'APPROVED')                       AS approved,
+             SUM(app.status = 'REJECTED')                       AS rejected,
+             SUM(app.status = 'PENDING')                        AS pending,
+             SUM(app.status = 'WITHDRAWN')                      AS withdrawn,
+             ROUND(SUM(app.status = 'APPROVED') * 100
+                   / NULLIF(SUM(app.status IN ('APPROVED','REJECTED')), 0)
+                  )                                             AS approval_pct,
+             ROUND(AVG(CASE WHEN app.reviewed_at IS NOT NULL
+                       THEN TIMESTAMPDIFF(HOUR, app.submitted_at, app.reviewed_at) / 24
+                       END), 1)                                 AS avg_days,
+             (SELECT COUNT(*) FROM adoptions a
+               WHERE a.shelter_id = sh.id
+                 AND a.adopted_on BETWEEN ? AND ?)              AS adoptions
+        FROM shelters sh
+        -- The applications reach the shelter through its pets, which
+        -- is the only route: adoption_applications has no shelter_id
+        -- of its own, and copying one there would let the two
+        -- disagree the day a pet is transferred.
+        LEFT JOIN pets p ON p.shelter_id = sh.id
+        LEFT JOIN adoption_applications app
+               ON app.pet_id = p.id
+              AND app.submitted_at >= ?
+              AND app.submitted_at <  DATE_ADD(?, INTERVAL 1 DAY)
+       WHERE (? IS NULL OR sh.id = ?)
+       GROUP BY sh.id, sh.name, sh.city, sh.capacity
+       ORDER BY sh.name
+
+  [jdbc.query]  petInventory()
+
+      SELECT sh.name AS shelter, p.name AS pet, p.species, p.breed,
+             p.sex, p.size, p.age_value, p.age_unit, p.status,
+             p.adoption_fee,
+             (    EXISTS (SELECT 1 FROM vaccinations v
+                           WHERE v.pet_id = p.id AND v.status = 'COMPLETED')
+              AND NOT EXISTS (SELECT 1 FROM vaccinations v2
+                               WHERE v2.pet_id = p.id
+                                 AND v2.status = 'SCHEDULED'
+                                 AND v2.next_due_on < CURDATE())
+             )                                            AS vaccinated,
+             (SELECT COUNT(*) FROM adoption_applications a2
+               WHERE a2.pet_id = p.id AND a2.status = 'PENDING') AS open_apps
+        FROM pets p
+        JOIN shelters sh ON sh.id = p.shelter_id
+       WHERE p.shelter_id IS NOT NULL
+         AND (? IS NULL OR p.shelter_id = ?)
+       ORDER BY sh.name, p.species, p.name
+
+  [jdbc.queryForObject]  quarterlyImpact()
+
+      SELECT SUM(a.fee_paid) FROM adoptions a
+       WHERE a.adopted_on BETWEEN ? AND ? AND (? IS NULL OR a.shelter_id = ?)
+
+  [jdbc.queryForList]  generate()
+
+      SELECT name FROM shelters WHERE id = ?
+
+====================================================================================================
+ MODULE: shelter   (4 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ shelter/ShelterService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  list()
+
+      SELECT  s.*,
+              (SELECT COUNT(*) FROM pets p
+                WHERE p.shelter_id = s.id
+                  AND p.status <> 'ADOPTED')            AS pet_count,
+              (SELECT COUNT(*) FROM users u
+                WHERE u.shelter_id = s.id
+                  AND u.role = 'STAFF'
+                  AND u.is_active = TRUE)               AS staff_count,
+              (SELECT COUNT(*) FROM shelter_suites sc
+                WHERE sc.shelter_id = s.id)             AS suite_count
+      FROM      shelters s
+      ORDER BY  s.name
+
+  [jdbc.query]  one()
+
+      SELECT  s.*,
+              (SELECT COUNT(*) FROM pets p
+                WHERE p.shelter_id = s.id
+                  AND p.status <> 'ADOPTED')            AS pet_count,
+              (SELECT COUNT(*) FROM users u
+                WHERE u.shelter_id = s.id
+                  AND u.role = 'STAFF'
+                  AND u.is_active = TRUE)               AS staff_count,
+              (SELECT COUNT(*) FROM shelter_suites sc
+                WHERE sc.shelter_id = s.id)             AS suite_count
+      FROM   shelters s
+      WHERE  s.id = ?
+
+  [jdbc.queryForObject]  setStatus()
+
+      SELECT COUNT(*) FROM users
+       WHERE shelter_id = ? AND role = 'STAFF' AND is_active = TRUE
+
+  [jdbc.queryForObject]  setStatus()
+
+      SELECT COUNT(*) FROM pets
+       WHERE shelter_id = ? AND status <> 'ADOPTED'
+
+====================================================================================================
+ MODULE: token   (2 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ token/UserTokenRepository.java
+----------------------------------------------------------------------------------------------------
+
+  [@Query]  invalidateOutstanding()
+
+      UPDATE UserToken t SET t.usedAt = :now WHERE t.userId = :userId AND t.tokenType = :type AND t.usedAt IS NULL
+
+  [@Query]  deleteExpiredBefore()
+
+      DELETE FROM UserToken t WHERE t.expiresAt < :cutoff
+
+
+====================================================================================================
+ MODULE: daycare   (5 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ daycare/DaycareService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  offers()
+
+      SELECT id, name, city, state, daycare_monthly_price, daycare_slot_capacity
+        FROM shelters
+       WHERE status = 'ACTIVE'
+         -- A shelter that has never set a price is not running
+         -- daycare. The capacity column defaults to 20 for every
+         -- shelter, so capacity alone would list all of them with a
+         -- free subscription button.
+         AND daycare_monthly_price > 0
+         AND daycare_slot_capacity > 0
+       ORDER BY name
+
+  [jdbc.query]  mine()
+
+      SELECT  d.id, d.pet_id, p.name AS pet_name, p.breed AS pet_breed,
+              p.species AS pet_species,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              d.owner_id, o.full_name AS owner_name, o.email AS owner_email,
+              d.shelter_id, s.name AS shelter_name, s.address_line AS shelter_address,
+              s.phone AS shelter_phone,
+              d.slot, d.monthly_price, d.start_date, d.end_date, d.status, d.created_at,
+              q.score AS quiz_score, q.max_score AS quiz_max_score, q.passed AS quiz_passed,
+              -- Correlated, not a join. A join to billing_slips would return
+              -- one row per slip and multiply the subscription itself.
+              (SELECT COUNT(*) FROM billing_slips bs
+                WHERE bs.subscription_id = d.id) AS slips_issued
+      FROM        daycare_subscriptions d
+      JOIN        pets          p ON p.id = d.pet_id
+      JOIN        users         o ON o.id = d.owner_id
+      JOIN        shelters      s ON s.id = d.shelter_id
+      -- INNER, unlike the boarding equivalent: quiz_attempt_id is NOT NULL
+      -- here, so there is no ungated subscription for a LEFT JOIN to rescue.
+      JOIN        quiz_attempts q ON q.id = d.quiz_attempt_id
+      WHERE d.owner_id = ?
+      ORDER BY d.status = 'ACTIVE' DESC, d.start_date DESC, d.id DESC
+
+  [jdbc.query]  forShelter()
+
+      SELECT  d.id, d.pet_id, p.name AS pet_name, p.breed AS pet_breed,
+              p.species AS pet_species,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              d.owner_id, o.full_name AS owner_name, o.email AS owner_email,
+              d.shelter_id, s.name AS shelter_name, s.address_line AS shelter_address,
+              s.phone AS shelter_phone,
+              d.slot, d.monthly_price, d.start_date, d.end_date, d.status, d.created_at,
+              q.score AS quiz_score, q.max_score AS quiz_max_score, q.passed AS quiz_passed,
+              -- Correlated, not a join. A join to billing_slips would return
+              -- one row per slip and multiply the subscription itself.
+              (SELECT COUNT(*) FROM billing_slips bs
+                WHERE bs.subscription_id = d.id) AS slips_issued
+      FROM        daycare_subscriptions d
+      JOIN        pets          p ON p.id = d.pet_id
+      JOIN        users         o ON o.id = d.owner_id
+      JOIN        shelters      s ON s.id = d.shelter_id
+      -- INNER, unlike the boarding equivalent: quiz_attempt_id is NOT NULL
+      -- here, so there is no ungated subscription for a LEFT JOIN to rescue.
+      JOIN        quiz_attempts q ON q.id = d.quiz_attempt_id
+      WHERE d.shelter_id = ?
+      ORDER BY d.status = 'ACTIVE' DESC,
+               FIELD(d.slot,'MORNING','MIDDAY','AFTERNOON'),
+               d.start_date DESC
+
+  [jdbc.query]  takenBySlot()
+
+      SELECT shelter_id, slot, COUNT(*) AS taken
+        FROM daycare_subscriptions
+       WHERE status = 'ACTIVE'
+         AND (? IS NULL OR shelter_id = ?)
+       GROUP BY shelter_id, slot
+
+  [jdbc.query]  row()
+
+      SELECT  d.id, d.pet_id, p.name AS pet_name, p.breed AS pet_breed,
+              p.species AS pet_species,
+              (SELECT ph.file_path FROM pet_photos ph
+                WHERE ph.pet_id = p.id AND ph.is_cover = TRUE LIMIT 1) AS pet_cover_photo_path,
+              d.owner_id, o.full_name AS owner_name, o.email AS owner_email,
+              d.shelter_id, s.name AS shelter_name, s.address_line AS shelter_address,
+              s.phone AS shelter_phone,
+              d.slot, d.monthly_price, d.start_date, d.end_date, d.status, d.created_at,
+              q.score AS quiz_score, q.max_score AS quiz_max_score, q.passed AS quiz_passed,
+              -- Correlated, not a join. A join to billing_slips would return
+              -- one row per slip and multiply the subscription itself.
+              (SELECT COUNT(*) FROM billing_slips bs
+                WHERE bs.subscription_id = d.id) AS slips_issued
+      FROM        daycare_subscriptions d
+      JOIN        pets          p ON p.id = d.pet_id
+      JOIN        users         o ON o.id = d.owner_id
+      JOIN        shelters      s ON s.id = d.shelter_id
+      -- INNER, unlike the boarding equivalent: quiz_attempt_id is NOT NULL
+      -- here, so there is no ungated subscription for a LEFT JOIN to rescue.
+      JOIN        quiz_attempts q ON q.id = d.quiz_attempt_id
+      WHERE d.id = ?
+
+====================================================================================================
+ MODULE: billing   (4 queries)
+====================================================================================================
+
+----------------------------------------------------------------------------------------------------
+ billing/BillingService.java
+----------------------------------------------------------------------------------------------------
+
+  [jdbc.query]  mine()
+
+      SELECT  bs.id, bs.slip_no, bs.owner_id, o.full_name AS owner_name,
+              o.email AS owner_email,
+              bs.shelter_id, s.name AS shelter_name,
+              s.address_line AS shelter_address, s.phone AS shelter_phone,
+              bs.boarding_request_id, bs.subscription_id,
+              d.slot AS slot,
+              -- The pet is reached through whichever source this slip has.
+              -- COALESCE rather than two columns: ck_slip_source guarantees
+              -- exactly one of the two joins produced a row.
+              COALESCE(br.pet_id, d.pet_id) AS pet_id,
+              p.name AS pet_name,
+              bs.period_from, bs.period_to, bs.units, bs.unit_rate, bs.total,
+              bs.issued_at, iss.full_name AS issued_by_name
+      FROM        billing_slips         bs
+      JOIN        users                 o   ON o.id   = bs.owner_id
+      JOIN        shelters              s   ON s.id   = bs.shelter_id
+      -- Both LEFT, because exactly one of them matches on any given row.
+      LEFT JOIN   boarding_requests     br  ON br.id  = bs.boarding_request_id
+      LEFT JOIN   daycare_subscriptions d   ON d.id   = bs.subscription_id
+      LEFT JOIN   pets                  p   ON p.id   = COALESCE(br.pet_id, d.pet_id)
+      -- LEFT, because issued_by is NULL on every slip the monthly job wrote.
+      LEFT JOIN   users                 iss ON iss.id = bs.issued_by
+      WHERE bs.owner_id = ? ORDER BY bs.issued_at DESC, bs.id DESC
+
+  [jdbc.query]  forShelter()
+
+      SELECT  bs.id, bs.slip_no, bs.owner_id, o.full_name AS owner_name,
+              o.email AS owner_email,
+              bs.shelter_id, s.name AS shelter_name,
+              s.address_line AS shelter_address, s.phone AS shelter_phone,
+              bs.boarding_request_id, bs.subscription_id,
+              d.slot AS slot,
+              -- The pet is reached through whichever source this slip has.
+              -- COALESCE rather than two columns: ck_slip_source guarantees
+              -- exactly one of the two joins produced a row.
+              COALESCE(br.pet_id, d.pet_id) AS pet_id,
+              p.name AS pet_name,
+              bs.period_from, bs.period_to, bs.units, bs.unit_rate, bs.total,
+              bs.issued_at, iss.full_name AS issued_by_name
+      FROM        billing_slips         bs
+      JOIN        users                 o   ON o.id   = bs.owner_id
+      JOIN        shelters              s   ON s.id   = bs.shelter_id
+      -- Both LEFT, because exactly one of them matches on any given row.
+      LEFT JOIN   boarding_requests     br  ON br.id  = bs.boarding_request_id
+      LEFT JOIN   daycare_subscriptions d   ON d.id   = bs.subscription_id
+      LEFT JOIN   pets                  p   ON p.id   = COALESCE(br.pet_id, d.pet_id)
+      -- LEFT, because issued_by is NULL on every slip the monthly job wrote.
+      LEFT JOIN   users                 iss ON iss.id = bs.issued_by
+      WHERE (? IS NULL OR bs.shelter_id = ?)
+      ORDER BY bs.issued_at DESC, bs.id DESC
+
+  [jdbc.queryForObject]  totals()
+
+      SELECT  COUNT(*)                                   AS slips,
+              COALESCE(SUM(total), 0)                    AS total,
+              -- COALESCE on the two SUMs as well as on the total:
+              -- SUM over nought rows is NULL, not 0, and a shelter
+              -- that has billed nothing yet is the normal first day.
+              COALESCE(SUM(boarding_request_id IS NOT NULL), 0) AS boarding_slips,
+              COALESCE(SUM(subscription_id     IS NOT NULL), 0) AS daycare_slips
+        FROM  billing_slips
+       WHERE  (? IS NULL OR shelter_id = ?)
+
+  [jdbc.query]  get()
+
+      SELECT  bs.id, bs.slip_no, bs.owner_id, o.full_name AS owner_name,
+              o.email AS owner_email,
+              bs.shelter_id, s.name AS shelter_name,
+              s.address_line AS shelter_address, s.phone AS shelter_phone,
+              bs.boarding_request_id, bs.subscription_id,
+              d.slot AS slot,
+              -- The pet is reached through whichever source this slip has.
+              -- COALESCE rather than two columns: ck_slip_source guarantees
+              -- exactly one of the two joins produced a row.
+              COALESCE(br.pet_id, d.pet_id) AS pet_id,
+              p.name AS pet_name,
+              bs.period_from, bs.period_to, bs.units, bs.unit_rate, bs.total,
+              bs.issued_at, iss.full_name AS issued_by_name
+      FROM        billing_slips         bs
+      JOIN        users                 o   ON o.id   = bs.owner_id
+      JOIN        shelters              s   ON s.id   = bs.shelter_id
+      -- Both LEFT, because exactly one of them matches on any given row.
+      LEFT JOIN   boarding_requests     br  ON br.id  = bs.boarding_request_id
+      LEFT JOIN   daycare_subscriptions d   ON d.id   = bs.subscription_id
+      LEFT JOIN   pets                  p   ON p.id   = COALESCE(br.pet_id, d.pet_id)
+      -- LEFT, because issued_by is NULL on every slip the monthly job wrote.
+      LEFT JOIN   users                 iss ON iss.id = bs.issued_by
+      WHERE bs.id = ?
+
+
+====================================================================================================
+ REPOSITORY QUERIES  --  every @Query in the project, written out
+====================================================================================================
+
+ Regenerated from the repositories. Nothing here is derived from a method name:
+ every repository method carries the statement it runs.
+
+   @Query methods        53
+     read  (SELECT)      41
+     write (@Modifying)  12
+     native SQL          42
+     JPQL                11
+     FOR UPDATE          4   <- the cross-row rules no constraint can express
+
+
+----------------------------------------------------------------------------------------------------
+ application/AdoptionRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findByApplicationId()        [native SQL]
+
+      SELECT *
+        FROM adoptions
+       WHERE application_id = :applicationId
+
+----------------------------------------------------------------------------------------------------
+ application/ApplicationRepository.java
+----------------------------------------------------------------------------------------------------
+
+  closeRivalApplications()     @Modifying [native SQL]
+
+      UPDATE adoption_applications
+         SET status              = 'REJECTED',
+             reviewed_by         = :reviewerId,
+             reviewed_at         = :decidedAt,
+             decline_reason_code = 'PET_ALREADY_MATCHED',
+             decline_message     = :message
+       WHERE pet_id = :petId
+         AND id    <> :keepId
+         AND status = 'PENDING'
+
+  existsByApplicantIdAndPetIdAndStatus() [JPQL]
+
+      SELECT COUNT(a) > 0
+        FROM AdoptionApplication a
+       WHERE a.applicantId = :applicantId
+         AND a.petId = :petId
+         AND a.status = :status
+
+  findByPetIdAndStatus()       [native SQL]
+
+      SELECT *
+        FROM adoption_applications
+       WHERE pet_id = :petId
+         AND status = :#{#status.name()}
+
+  markApproved()               @Modifying [native SQL]
+
+      UPDATE adoption_applications
+         SET status      = 'APPROVED',
+             reviewed_by = :reviewerId,
+             reviewed_at = :decidedAt
+       WHERE id     = :id
+         AND status = 'PENDING'
+
+  markDeclined()               @Modifying [native SQL]
+
+      UPDATE adoption_applications
+         SET status              = 'REJECTED',
+             reviewed_by         = :reviewerId,
+             reviewed_at         = :decidedAt,
+             decline_reason_code = :#{#reasonCode.name()},
+             decline_message     = :message
+       WHERE id     = :id
+         AND status = 'PENDING'
+
+  markWithdrawn()              @Modifying [native SQL]
+
+      UPDATE adoption_applications
+         SET status      = 'WITHDRAWN',
+             reviewed_at = :withdrawnAt
+       WHERE id     = :id
+         AND status = 'PENDING'
+
+----------------------------------------------------------------------------------------------------
+ billing/BillingSlipItemRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findForSlip()                [native SQL]
+
+      SELECT *
+        FROM billing_slip_items
+       WHERE slip_id = :slipId
+       ORDER BY sort_order, id
+
+----------------------------------------------------------------------------------------------------
+ billing/BillingSlipRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findForBoarding()            [native SQL]
+
+      SELECT *
+        FROM billing_slips
+       WHERE boarding_request_id = :boardingRequestId
+
+  findForSubscriptionMonth()   [native SQL]
+
+      SELECT *
+        FROM billing_slips
+       WHERE subscription_id = :subscriptionId
+         AND period_from     = :periodFrom
+
+----------------------------------------------------------------------------------------------------
+ boarding/BoardingInstructionRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findByBoardingIdOrderByIdAsc() [native SQL]
+
+      SELECT *
+        FROM boarding_instructions
+       WHERE boarding_id = :boardingId
+       ORDER BY id ASC
+
+----------------------------------------------------------------------------------------------------
+ boarding/BoardingRequestRepository.java
+----------------------------------------------------------------------------------------------------
+
+  countPlacesHeld()            [native SQL]
+
+      SELECT (SELECT COUNT(*)
+                FROM pets p
+               WHERE p.shelter_id = :shelterId
+                 AND p.status IN ('AVAILABLE','PENDING'))
+           + (SELECT COUNT(*)
+                FROM boarding_requests b
+               WHERE b.shelter_id = :shelterId
+                 AND b.status IN ('ACCEPTED','ACTIVE')
+                 AND b.start_date <= :end
+                 AND b.end_date   >= :start)
+
+  suiteLoads()                 [native SQL, interface projection]
+
+      SELECT     su.id AS suiteId,
+                 su.capacity AS capacity,
+                 ((SELECT COUNT(*)
+                     FROM boarding_requests b
+                    WHERE b.suite_id = su.id
+                      AND b.status IN ('ACCEPTED','ACTIVE')
+                      AND b.start_date <= :end
+                      AND b.end_date   >= :start)
+                + (SELECT COUNT(*)
+                     FROM daycare_attendance a
+                    WHERE a.suite_id        = su.id
+                      AND a.visit_date      = CURDATE()
+                      AND a.checked_out_at IS NULL
+                      AND CURDATE() BETWEEN :start AND :end)) AS placesUsed
+      FROM       shelter_suites su
+      WHERE      su.shelter_id = :shelterId
+
+  lockOverlappingForPet()      @Lock FOR UPDATE [JPQL]
+
+      SELECT b FROM BoardingRequest b
+       WHERE b.petId = :petId
+         AND b.status IN (com.pawhome.backend.boarding.BoardingStatus.ACCEPTED,
+                          com.pawhome.backend.boarding.BoardingStatus.ACTIVE)
+         AND b.startDate <= :end
+         AND b.endDate   >= :start
+       ORDER BY b.startDate
+
+  lockOverlappingForSuite()    @Lock FOR UPDATE [JPQL]
+
+      SELECT b FROM BoardingRequest b
+       WHERE b.suiteId = :suiteId
+         AND b.status IN (com.pawhome.backend.boarding.BoardingStatus.ACCEPTED,
+                          com.pawhome.backend.boarding.BoardingStatus.ACTIVE)
+         AND b.startDate <= :end
+         AND b.endDate   >= :start
+
+----------------------------------------------------------------------------------------------------
+ boarding/BoardingUpdateRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findByBoardingIdOrderByPostedAtDescIdDesc() [native SQL]
+
+      SELECT *
+        FROM boarding_updates
+       WHERE boarding_id = :boardingId
+       ORDER BY posted_at DESC, id DESC
+
+----------------------------------------------------------------------------------------------------
+ daycare/DaycareAttendanceRepository.java
+----------------------------------------------------------------------------------------------------
+
+  checkOut()                   @Modifying [native SQL]
+
+      UPDATE daycare_attendance
+         SET checked_out_at = :at,
+             checked_out_by = :staffId
+       WHERE id             = :id
+         AND checked_out_at IS NULL
+
+  countPresentInSuiteBand()    [native SQL]
+
+      Replaced findInSuiteBand(), which returned an Optional. That signature
+      was only honest while uq_suite_band guaranteed at most one row; V16
+      drops the key, so the question stops being "is there one" and becomes
+      "how many". Reads idx_attendance_suite_band, all four columns, so the
+      count never touches the table.
+
+      SELECT COUNT(*)
+        FROM daycare_attendance
+       WHERE suite_id        = :suiteId
+         AND visit_date      = :onDate
+         AND slot            = :#{#slot.name()}
+         AND checked_out_at IS NULL
+
+  findVisit()                  [native SQL]
+
+      SELECT *
+        FROM daycare_attendance
+       WHERE subscription_id = :subscriptionId
+         AND visit_date      = :onDate
+
+----------------------------------------------------------------------------------------------------
+ daycare/DaycareSubscriptionRepository.java
+----------------------------------------------------------------------------------------------------
+
+  expireEndedBefore()          @Modifying [native SQL]
+
+      UPDATE daycare_subscriptions
+         SET status = 'EXPIRED'
+       WHERE status = 'ACTIVE'
+         AND end_date IS NOT NULL
+         AND end_date < :onDate
+
+  findActiveOnOrBefore()       [native SQL]
+
+      SELECT *
+        FROM daycare_subscriptions
+       WHERE status      = 'ACTIVE'
+         AND start_date <= :periodTo
+       ORDER BY id
+
+  findForOwner()               [native SQL]
+
+      SELECT *
+        FROM daycare_subscriptions
+       WHERE owner_id = :ownerId
+       ORDER BY status = 'ACTIVE' DESC, start_date DESC, id DESC
+
+  findForShelter()             [native SQL]
+
+      SELECT *
+        FROM daycare_subscriptions
+       WHERE shelter_id = :shelterId
+       ORDER BY status = 'ACTIVE' DESC,
+                FIELD(slot, 'MORNING', 'MIDDAY', 'AFTERNOON'),
+                start_date DESC
+
+  lockPetSlot()                @Lock FOR UPDATE [JPQL]
+
+      SELECT s FROM DaycareSubscription s
+       WHERE s.petId  = :petId
+         AND s.slot   = :slot
+         AND s.status = com.pawhome.backend.daycare.SubscriptionStatus.ACTIVE
+
+  lockSlotAtShelter()          @Lock FOR UPDATE [JPQL]
+
+      SELECT s FROM DaycareSubscription s
+       WHERE s.shelterId = :shelterId
+         AND s.slot      = :slot
+         AND s.status    = com.pawhome.backend.daycare.SubscriptionStatus.ACTIVE
+       ORDER BY s.id
+
+  stop()                       @Modifying [native SQL]
+
+      UPDATE daycare_subscriptions
+         SET status   = :#{#status.name()},
+             end_date = :endDate
+       WHERE id       = :id
+         AND status   = 'ACTIVE'
+
+----------------------------------------------------------------------------------------------------
+ health/VaccineTypeRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findByActiveTrueOrderByNameAsc() [native SQL]
+
+      SELECT *
+        FROM vaccine_types
+       WHERE is_active = TRUE
+       ORDER BY name ASC
+
+----------------------------------------------------------------------------------------------------
+ notification/NotificationRepository.java
+----------------------------------------------------------------------------------------------------
+
+  countByUserIdAndReadAtIsNull() [native SQL]
+
+      SELECT COUNT(*)
+        FROM notifications
+       WHERE user_id = :userId
+         AND read_at IS NULL
+
+  findRecentForUser()          [native SQL]
+
+      SELECT *
+        FROM notifications
+       WHERE user_id = :userId
+       ORDER BY created_at DESC, id DESC
+       LIMIT :limit
+
+  markAllRead()                @Modifying [JPQL]
+
+      UPDATE Notification n
+        SET n.readAt = :now
+        WHERE n.userId = :userId
+        AND n.readAt IS NULL
+
+----------------------------------------------------------------------------------------------------
+ pet/PetPhotoRepository.java
+----------------------------------------------------------------------------------------------------
+
+  countByPetId()               [native SQL]
+
+      SELECT COUNT(*)
+        FROM pet_photos
+       WHERE pet_id = :petId
+
+  findByPetIdAndCoverTrue()    [native SQL]
+
+      SELECT *
+        FROM pet_photos
+       WHERE pet_id = :petId
+         AND is_cover = TRUE
+
+  findByPetIdOrderBySortOrderAscIdAsc() [native SQL]
+
+      SELECT *
+        FROM pet_photos
+       WHERE pet_id = :petId
+       ORDER BY sort_order ASC, id ASC
+
+----------------------------------------------------------------------------------------------------
+ pet/PetRepository.java
+----------------------------------------------------------------------------------------------------
+
+  countByShelterId()           [native SQL]
+
+      SELECT COUNT(*)
+        FROM pets
+       WHERE shelter_id = :shelterId
+
+  markAdopted()                @Modifying [native SQL]
+
+      UPDATE pets
+         SET status   = 'ADOPTED',
+             owner_id = :ownerId
+       WHERE id       = :petId
+         AND status  IN ('AVAILABLE', 'PENDING')
+
+----------------------------------------------------------------------------------------------------
+ quiz/QuizAttemptRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findFirstByUserIdAndQuizTypeOrderByIdDesc() [native SQL]
+
+      SELECT *
+        FROM quiz_attempts
+       WHERE user_id = :userId
+         AND quiz_type = :#{#quizType.name()}
+       ORDER BY id DESC
+       LIMIT 1
+
+----------------------------------------------------------------------------------------------------
+ quiz/QuizOptionRepository.java
+----------------------------------------------------------------------------------------------------
+
+  deleteByQuestionId()         @Modifying [JPQL]
+
+      DELETE
+        FROM QuizOption o
+        WHERE o.questionId = :questionId
+
+  findByQuestionIdInOrderByDisplayOrderAsc() [native SQL]
+
+      SELECT *
+        FROM quiz_options
+       WHERE question_id IN (:questionIds)
+       ORDER BY display_order ASC
+
+  findByQuestionIdOrderByDisplayOrderAsc() [native SQL]
+
+      SELECT *
+        FROM quiz_options
+       WHERE question_id = :questionId
+       ORDER BY display_order ASC
+
+----------------------------------------------------------------------------------------------------
+ quiz/QuizQuestionRepository.java
+----------------------------------------------------------------------------------------------------
+
+  countByQuizType()            [native SQL]
+
+      SELECT COUNT(*)
+        FROM quiz_questions
+       WHERE quiz_type = :#{#quizType.name()}
+
+  countByQuizTypeAndStatus()   [native SQL]
+
+      SELECT COUNT(*)
+        FROM quiz_questions
+       WHERE quiz_type = :#{#quizType.name()}
+         AND status = :#{#status.name()}
+
+  findByQuizTypeOrderByDisplayOrderAsc() [native SQL]
+
+      SELECT *
+        FROM quiz_questions
+       WHERE quiz_type = :#{#quizType.name()}
+       ORDER BY display_order ASC
+
+----------------------------------------------------------------------------------------------------
+ quiz/TraitRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findByActiveTrueOrderByLabelAsc() [native SQL]
+
+      SELECT *
+        FROM traits
+       WHERE is_active = TRUE
+       ORDER BY label ASC
+
+----------------------------------------------------------------------------------------------------
+ shelter/ShelterRepository.java
+----------------------------------------------------------------------------------------------------
+
+  findAllByOrderByNameAsc()    [native SQL]
+
+      SELECT *
+        FROM shelters
+       ORDER BY name ASC
+
+  findByNameIgnoreCase()       [native SQL]
+
+      SELECT *
+        FROM shelters
+       WHERE UPPER(name) = UPPER(:name)
+
+  findByStatusOrderByNameAsc() [native SQL]
+
+      SELECT *
+        FROM shelters
+       WHERE status = :#{#status.name()}
+       ORDER BY name ASC
+
+  lockById()                   @Lock FOR UPDATE [JPQL]                    [V16]
+
+      NOTHING WRITES TO THE ROW THIS LOCKS. It is not protecting a write to
+      shelters -- it is protecting a READ of pets and boarding_requests from
+      being made twice at once. accept() asks countPlacesHeld() and then, if
+      there is room, writes a stay that changes the answer.
+
+      JPQL rather than native, and that is forced: @Lock is what appends FOR
+      UPDATE, and Spring Data can only do that to a query it parses. On a
+      nativeQuery the annotation is silently ignored, which would leave this
+      reading like a lock and behaving like a plain SELECT.
+
+      SELECT s FROM Shelter s WHERE s.id = :id
+
+----------------------------------------------------------------------------------------------------
+ shelter/ShelterSuiteRepository.java
+----------------------------------------------------------------------------------------------------
+
+  countByShelterId()           [native SQL]
+
+      SELECT COUNT(*)
+        FROM shelter_suites
+       WHERE shelter_id = :shelterId
+
+  findByShelterIdAndNameIgnoreCase() [native SQL]
+
+      SELECT *
+        FROM shelter_suites
+       WHERE shelter_id = :shelterId
+         AND UPPER(name) = UPPER(:name)
+
+  findByShelterIdOrderByNameAsc() [native SQL]
+
+      SELECT *
+        FROM shelter_suites
+       WHERE shelter_id = :shelterId
+       ORDER BY name ASC
+
+----------------------------------------------------------------------------------------------------
+ token/UserTokenRepository.java
+----------------------------------------------------------------------------------------------------
+
+  deleteExpiredBefore()        @Modifying [JPQL]
+
+      DELETE
+        FROM UserToken t
+        WHERE t.expiresAt < :cutoff
+
+  findByTokenHash()            [native SQL]
+
+      SELECT *
+        FROM user_tokens
+       WHERE token_hash = :tokenHash
+
+  invalidateOutstanding()      @Modifying [JPQL]
+
+      UPDATE UserToken t
+        SET t.usedAt = :now
+        WHERE t.userId = :userId
+        AND t.tokenType = :type
+        AND t.usedAt IS NULL
+
+----------------------------------------------------------------------------------------------------
+ user/UserRepository.java
+----------------------------------------------------------------------------------------------------
+
+  existsByEmail()              [JPQL]
+
+      SELECT COUNT(u) > 0
+        FROM User u
+        WHERE u.email = :email
+
+  findByEmail()                [native SQL]
+
+      SELECT *
+        FROM users
+       WHERE email = :email

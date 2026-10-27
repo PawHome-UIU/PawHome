@@ -1,0 +1,278 @@
+================================================================================
+PAWHOME  --  TEAMMATE 2
+SCOPE:  Staff / shelter operations + the shared UI kit + Settings
+BRANCH: feature/staff-ui
+SIZE:   26 files, ~3,082 lines  (team average 3,042)
+================================================================================
+
+You own the console shelter staff work in all day: intake pets, review adoption
+applications, run boarding, record vaccinations.
+
+You ALSO own src/components/ui/ -- the design system the other two import on
+every page. That makes you the most depended-on person on the team, so read
+section 3 carefully.
+
+
+--------------------------------------------------------------------------------
+1.  FILES YOU OWN  (only you edit these)
+--------------------------------------------------------------------------------
+
+  src/pages/staff/              6 files, 992 lines
+      StaffDashboard.jsx
+      PetsManagementPage.jsx
+      ApplicationsPage.jsx
+      ApplicationReviewPage.jsx
+      BoardingPage.jsx
+      CareHealthPage.jsx
+
+  src/components/staff/         6 files, 845 lines
+      StaffLayout.jsx
+      AddPetModal.jsx
+      AddVaccinationModal.jsx
+      DeclineApplicationModal.jsx
+      DeclineBoardingModal.jsx
+      PostBoardingUpdateModal.jsx
+
+  src/components/ui/           10 files, 698 lines   <-- THE DESIGN SYSTEM
+      Button.jsx      Input.jsx       Field.jsx
+      Card.jsx        Checkbox.jsx    Dropdown.jsx
+      Modal.jsx       SuccessModal.jsx
+      Tabs.jsx        Accordion.jsx
+
+  src/components/portal/        2 files, 181 lines
+      PortalShell.jsx
+      PanelCard.jsx
+      -> the shell wrapping the staff and adopter consoles.
+
+  src/pages/SettingsPage.jsx    1 file, 244 lines
+      -> one settings page reused by every role.
+
+  src/data/staff.js             1 file, 122 lines
+
+
+--------------------------------------------------------------------------------
+2.  FILES YOU MUST NOT EDIT
+--------------------------------------------------------------------------------
+
+  src/pages/adopter/*           Teammate 1
+  src/components/adopter/*      Teammate 1
+  src/components/pets/*         Teammate 1
+  src/pages/auth/*              Teammate 1
+  src/pages/admin/*             Teammate 3
+  src/components/admin/*        Teammate 3
+  src/pages/public/*            Teammate 1 (2 pages) / Teammate 3 (5 pages)
+  src/components/layout/*       Teammate 3
+  src/components/brand/*        Teammate 3
+  src/components/sections/*     Teammate 3
+  src/data/adopter.js, pets.js  Teammate 1
+  src/data/admin.js             Teammate 3
+
+  IMPORTING from another person's folder is always fine.
+  EDITING their file is what causes merge conflicts. Ask instead.
+
+
+--------------------------------------------------------------------------------
+3.  YOU OWN THE UI KIT  --  extra responsibility
+--------------------------------------------------------------------------------
+
+Both other teammates import Button, Input, Modal, Field, etc. on every page.
+That means:
+
+  * BUILD THE UI KIT FIRST, before your staff pages. The others are blocked
+    until Button and Input exist and are stable. Push them on day one.
+
+  * A BREAKING CHANGE BREAKS TWO OTHER PEOPLE. If you rename a prop
+    (variant -> kind, say), you have just broken every page they wrote.
+    -> Add new props, do not rename old ones.
+    -> If you MUST rename, announce it in the group chat first and say which
+       files they need to update.
+
+  * ADD, DO NOT FORK. If Teammate 1 asks for a "ghost" Button variant, add it
+    to Button.jsx. Never let them copy Button into their own folder -- that is
+    how a design system dies in week two.
+
+  * DOCUMENT THE PROPS. One comment block at the top of each component listing
+    what it accepts. It saves you answering the same question twice a day.
+
+  * NEVER put a raw hex colour in a ui/ component. Everything comes from the
+    `pw` palette in tailwind.config.js, so one palette change updates the
+    whole app.
+
+
+--------------------------------------------------------------------------------
+4.  ONE-TIME SETUP
+--------------------------------------------------------------------------------
+
+Prerequisite: Faiyaj must have pushed the repo to GitHub first.
+
+  git --version
+  node -v            # need 20+
+  docker --version
+
+Clone and branch:
+
+  # macOS / Linux / Git Bash
+  cd ~/Documents
+  git clone https://github.com/FaiyajJarif/Pawhome.git
+  cd Pawhome
+
+  # Windows Command Prompt
+  cd %USERPROFILE%\Documents
+  git clone https://github.com/FaiyajJarif/Pawhome.git
+  cd Pawhome
+
+Then, identically on every OS:
+
+  git config user.name  "Your Name"
+  git config user.email "your@email.com"
+
+  git checkout -b feature/staff-ui
+  git push -u origin feature/staff-ui
+
+Install and run:
+
+  cd frontend
+  npm install
+  npm run dev                    -> http://localhost:5174
+
+  # in another tab, for the API:
+  cd ..\docker    (Windows)  |  cd ../docker    (macOS)
+  docker compose up -d
+  cd ..\backend   (Windows)  |  cd ../backend   (macOS)
+  mvnw.cmd spring-boot:run   (Windows)  |  ./mvnw spring-boot:run   (macOS)
+
+
+--------------------------------------------------------------------------------
+5.  DAILY WORKFLOW  --  do this every single day
+--------------------------------------------------------------------------------
+
+START of a session -- pull main into your branch BEFORE you write anything:
+
+  git checkout feature/staff-ui
+  git fetch origin
+  git merge origin/main
+
+  (Doing this daily means you resolve 2 small conflicts instead of 40 large
+   ones at the end. This is the single most important habit in this list.)
+
+WHILE WORKING -- commit small and often:
+
+  git add src/components/ui/Button.jsx
+  git commit -m "ui: add ghost variant to Button"
+
+  Commit message prefix is your scope, so `git log` is readable:
+      ui: ...      staff: ...      settings: ...
+
+  PUSH UI-KIT CHANGES IMMEDIATELY. The other two are waiting on them; do not
+  sit on Button.jsx for three days.
+
+END of a session -- always push, even if unfinished:
+
+  git push
+
+
+--------------------------------------------------------------------------------
+6.  THE ROUTING FILE  --  the ONE place all three of you collide
+--------------------------------------------------------------------------------
+
+src/App.jsx is shared. Everyone adds routes to it, so it WILL conflict.
+
+Rule: only ever touch YOUR marked block. Never reformat or reorder the file.
+
+  {/* ---- TEAMMATE 2: staff console + settings ---- */}
+  <Route path="/staff"          element={<StaffLayout />}>
+    <Route index                element={<StaffDashboard />} />
+    <Route path="pets"          element={<PetsManagementPage />} />
+    ...your routes only...
+  </Route>
+  {/* ---- END TEAMMATE 2 ---- */}
+
+If git reports a conflict in App.jsx, KEEP BOTH SIDES:
+
+  git merge origin/main
+  # open src/App.jsx, delete the <<<<<<< ======= >>>>>>> lines,
+  # keep BOTH your routes and theirs
+  git add src/App.jsx
+  git commit
+  npm run dev        # confirm the app still loads before pushing
+  git push
+
+
+--------------------------------------------------------------------------------
+7.  SHARED FILES  --  ask before touching
+--------------------------------------------------------------------------------
+
+  src/App.jsx                 your marked block only (see section 6)
+  src/main.jsx                Faiyaj
+  src/index.css               Faiyaj
+  src/api/client.js           Faiyaj
+  src/lib/config.js           Faiyaj
+  src/lib/apiError.js         Faiyaj
+  tailwind.config.js          Faiyaj -- but as UI-kit owner you will need
+                              palette changes most. Ask him, do not edit it
+                              yourself, or the palette forks three ways.
+  package.json                tell the group BEFORE adding a dependency.
+
+
+--------------------------------------------------------------------------------
+8.  WHEN YOUR PART IS DONE  --  open a Pull Request
+--------------------------------------------------------------------------------
+
+  git fetch origin
+  git merge origin/main        # resolve anything, run the app, confirm it works
+  npm run build                # MUST succeed. A broken build blocks everyone.
+  git push
+
+Then on github.com/FaiyajJarif/Pawhome:
+  "Compare & pull request"  ->  base: main   compare: feature/staff-ui
+  Title:  Staff console, shared UI kit and settings
+  Body:   list the pages you finished + every ui/ component and its props
+
+Ask Faiyaj to merge with --no-ff so your work stays one visible commit on main:
+
+  git checkout main
+  git merge --no-ff feature/staff-ui
+
+
+--------------------------------------------------------------------------------
+9.  DEFINITION OF DONE  --  tick every box before the PR
+--------------------------------------------------------------------------------
+
+  [ ] every page in section 1 renders without a console error
+  [ ] every page works at 375px wide (phone) as well as desktop
+  [ ] loading, empty AND error states exist -- not just the happy path
+  [ ] every ui/ component has a props comment block at the top
+  [ ] no raw hex colours anywhere -- all from the `pw` palette
+  [ ] destructive actions (decline, delete) ask for confirmation first
+  [ ] no console.log left behind
+  [ ] npm run build succeeds
+  [ ] merged latest origin/main and the app still runs
+
+
+--------------------------------------------------------------------------------
+10. IF SOMETHING BREAKS
+--------------------------------------------------------------------------------
+
+  "Vite: failed to resolve import"
+        A file you imported was deleted or renamed by someone else.
+        -> git fetch origin && git merge origin/main, then fix the import path.
+
+  Someone says "you broke my page"
+        You probably renamed a prop in ui/. Check `git log src/components/ui/`.
+        Add the old prop back as an alias, then coordinate the rename properly.
+
+  "Network Error" / API unreachable in the browser
+        The backend is not running. -> cd backend && ./mvnw spring-boot:run
+        Check the port is 8081 in src/lib/config.js.
+
+  Merge conflict you do not understand
+        git merge --abort           # nothing is lost, you are back where you were
+        Then ask the group before retrying. Never force-push to fix a conflict.
+
+  You committed to main by accident
+        git branch feature/staff-ui         # save your work onto your branch
+        git checkout feature/staff-ui
+        (then tell Faiyaj -- do NOT push main)
+
+  NEVER RUN:  git push --force        on a shared branch. It deletes other
+                                      people's commits.

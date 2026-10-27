@@ -1,0 +1,603 @@
+================================================================================
+PAWHOME  --  FAIYAJ JARIF   (TEAM LEADER)
+MY PART:  Login & Sign-up  ·  Home page  ·  the whole Adopter role
+          plus the database design and the shared app shell
+BRANCH:   feature/auth-adopter
+SIZE:     40 files, 4,404 lines   (team average 4,442)
+================================================================================
+
+================================================================================
+PART 1  --  THE SHARED FOUNDATION
+Every teammate must be able to explain this part. It is identical in all
+three documents.
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  WHY WE CHOSE REACT
+--------------------------------------------------------------------------------
+
+Five real reasons, not "it is popular":
+
+1. REUSE.  We have 29 screens. Without React we would write the same button,
+   the same input box and the same pop-up dialog on every one of them. In
+   React we wrote Button.jsx ONCE and imported it 29 times. Change the button
+   style in one file and every screen updates.
+
+2. THE SCREEN FOLLOWS THE DATA.  In plain HTML+JavaScript you have to find
+   the element and change it by hand every time something happens. In React
+   you change the DATA and React redraws whatever depended on it. Fewer bugs,
+   because there is no way for the screen and the data to disagree.
+
+3. SINGLE PAGE APPLICATION.  The browser loads one HTML file once. After that
+   React swaps the content when the address changes. No white flash, no full
+   reload -- it feels like a phone app rather than a website.
+
+4. READY-MADE ECOSYSTEM.  Routing, charts, icons and HTTP all have mature
+   React libraries. We did not have to build any of them.
+
+5. IT LETS THREE PEOPLE WORK AT ONCE.  A React component is just a file. We
+   split the project so each person owns whole folders nobody else edits,
+   which is why we get almost no merge conflicts.
+
+--------------------------------------------------------------------------------
+1.2  HOW REACT ACTUALLY WORKS  (the five ideas)
+--------------------------------------------------------------------------------
+
+COMPONENT   A JavaScript function that returns JSX (HTML-looking code).
+            Its name starts with a capital letter.
+                function PetCard() { return <div>Cooper</div>; }
+
+JSX         HTML written inside JavaScript. Vite converts it to real
+            JavaScript before the browser sees it.
+
+PROPS       Data passed INTO a component from its parent. Read-only.
+                <PetCard name="Cooper" age="3 months" />
+
+STATE       Data that CHANGES inside a component. Declared with useState.
+            When you call the setter, React redraws that component.
+                const [open, setOpen] = useState(false);
+                setOpen(true);        // -> React redraws
+
+EFFECT      Code that runs AFTER the screen is drawn -- used for fetching
+            data. Declared with useEffect.
+                useEffect(() => { api.get("/pets").then(...) }, []);
+            The empty [] means "run once when the page opens".
+
+WHY IT IS FAST:  React keeps a lightweight copy of the page in memory (the
+"virtual DOM"). When data changes it compares old and new, and updates only
+the parts that actually differ instead of redrawing everything.
+
+OTHER HOOKS WE USE:
+  useMemo         remember a calculated value so filtering does not re-run on
+                  every keystroke
+  useParams       read the changing part of an address, e.g. the 7 in /pets/7
+  useNavigate     move to another page from code, e.g. after a form is saved
+  useLocation     read the current address
+  useContext      read shared data from anywhere without passing props down
+                  through every level -- this is how AuthContext works
+
+--------------------------------------------------------------------------------
+1.3  THE ARCHITECTURE  --  how each section provides everything
+--------------------------------------------------------------------------------
+
+Three programs run at the same time and talk over the network:
+
+    BROWSER  (React + Vite, port 5174)
+        |  Axios request, carrying the login token
+        v
+    BACKEND  (Spring Boot, port 8081)
+        |  JDBC
+        v
+    DATABASE (MySQL 8.4 in Docker, port 3307)
+
+The browser NEVER touches the database directly. Everything goes through the
+backend, because the backend is the only place that can be trusted to check
+"are you allowed to do this?"
+
+INSIDE THE FRONTEND there are four layers. Each provides something different:
+
+  PAGES         src/pages/...
+                One file = one full screen. A page knows WHAT to show and WHEN
+                to fetch. It holds the state and the handlers.
+
+  COMPONENTS    src/components/...
+                Reusable pieces. A component knows HOW something looks. It
+                takes props and gives back JSX. It does not fetch data.
+                  ui/         buttons, inputs, modals -- used by everyone
+                  layout/     public nav bar, footer, page frames
+                  portal/     the sidebar shell for logged-in areas
+                  admin/ staff/ adopter/   pieces used by only that portal
+                  pets/ brand/ sections/   shared small pieces
+
+  DATA + API    src/api/client.js   the one place that talks to the backend
+                src/lib/            small helpers (address, error text, rules)
+                src/data/           placeholder data for screens whose
+                                    endpoints are not built yet
+
+  SHELL         index.html -> src/main.jsx -> src/App.jsx
+                main.jsx starts React and wraps everything in BrowserRouter
+                and AuthProvider. App.jsx lists every route.
+
+THE RULE WE FOLLOW: pages fetch, components display. A component that fetches
+its own data cannot be reused anywhere else.
+
+--------------------------------------------------------------------------------
+1.4  LIBRARIES AND DEPENDENCIES  (exact versions, from package-lock.json)
+--------------------------------------------------------------------------------
+
+FRONTEND -- runtime
+  react              19.2.8    builds the screens out of components
+  react-dom          19.2.8    puts React components into the browser page
+  react-router-dom   7.18.3    decides which page shows for which address
+  axios              1.20.0    sends HTTP requests to the backend
+  recharts           3.10.1    draws the charts on the admin pages
+  react-icons        5.7.0     the icon set
+
+FRONTEND -- build tools (not shipped to the user)
+  vite               8.2.2     dev server + production build
+  @vitejs/plugin-react         lets Vite understand JSX
+  tailwindcss        3.4.19    styling with utility classes
+  postcss + autoprefixer       runs Tailwind and adds browser prefixes
+  eslint (+ plugins)           catches mistakes before they run
+
+  WHY TAILWIND 3 AND NOT 4:  version 4 changed how it is configured. Our
+  tailwind.config.js and postcss.config.js are written for version 3.
+  Upgrading would break every style in the project.
+
+BACKEND
+  Spring Boot 3.4.1, Java 17, Maven
+  spring-boot-starter-web            REST endpoints
+  spring-boot-starter-data-jpa       Hibernate, database access
+  spring-boot-starter-validation     @Valid on incoming data
+  spring-boot-starter-security       login and permissions
+  spring-boot-starter-mail           verification and invite emails
+  jjwt 0.12.5                        creates and reads the login token
+  mysql-connector-j                  the MySQL driver
+  flyway-core + flyway-mysql         builds the tables from .sql files
+                                     (flyway-core ALONE will not do MySQL --
+                                      Flyway 10 split each database into its
+                                      own module)
+  lombok, mapstruct                  less boilerplate in Java classes
+
+DATABASE
+  MySQL 8.4 (InnoDB, utf8mb4) in Docker.
+  Version pinned on purpose: CHECK constraints are only ENFORCED from MySQL
+  8.0.16. Older servers read them and silently ignore them, which is worse
+  than not having them.
+
+PORTS
+  3307  MySQL      (3306 is any MySQL already on the laptop)
+  8081  backend
+  5174  frontend dev server
+  4174  frontend production preview
+
+--------------------------------------------------------------------------------
+1.5  ROUTING  --  which page shows for which address
+--------------------------------------------------------------------------------
+
+THE CONTROL FILE IS  src/App.jsx.  Every address in the whole application is
+listed there. If a page is not in App.jsx, you cannot reach it.
+
+  index.html          one empty <div id="root">, loads main.jsx
+  src/main.jsx        starts React; wraps the app in
+                        <BrowserRouter>   -- the router
+                          <AuthProvider>  -- who is signed in
+                            <App />
+  src/App.jsx         the route table
+
+THE FIVE ROUTE GROUPS:
+
+  PUBLIC   /  /pets  /pets/:id  /features  /services  /about
+  AUTH     /join  /login  /register  /forgot-password
+           /check-email  /verify-email  /reset-password  /accept-invite
+  ADMIN    /admin  /admin/shelters  /admin/users  /admin/analytics
+           /admin/reports  /admin/quiz  /admin/settings
+  STAFF    /staff  /staff/pets  /staff/applications  /staff/applications/:id
+           /staff/care  /staff/boarding  /staff/settings
+  ADOPTER  /app  /app/pets  /app/pets/:id  /app/pets/:id/apply
+           /app/recommendations  /app/applications  /app/boarding
+           /app/boarding/:id  /app/favorites  /app/settings
+  404      *
+
+TWO THINGS TO REMEMBER:
+  * ":id" is a changing value. /app/pets/7 shows pet 7; the page reads it
+    with useParams().
+  * The "*" 404 route MUST STAY LAST. React Router picks the FIRST match and
+    "*" matches everything -- if it moves up, every page becomes a 404.
+
+--------------------------------------------------------------------------------
+1.6  HOW WE STOP AN ADOPTER SEEING THE ADMIN PAGES
+--------------------------------------------------------------------------------
+
+TWO LAYERS. Explain both -- the second one is where the marks are.
+
+LAYER 1 -- THE BROWSER (navigation only, NOT security)
+  src/context/AuthContext.jsx   holds who is signed in
+  src/components/auth/ProtectedRoute.jsx   wraps whole route groups
+
+  In App.jsx:
+      <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
+        ...all the /admin routes...
+      </Route>
+
+  Three outcomes:
+      not signed in   -> sent to /login, remembering where they were going
+      wrong role      -> sent to their own portal (not an error page -- they
+                         are not doing anything wrong, just in the wrong place)
+      right role      -> the page renders
+
+  While the app is still asking the server who you are, ProtectedRoute shows
+  a spinner. Without that, refreshing on /admin would flash the login page.
+
+LAYER 2 -- THE SERVER (this is the real security)
+  backend .../security/SecurityConfig.java   which endpoints need a login
+  backend .../security/ScopeGuard.java       which rows you may touch
+  backend .../security/JwtAuthFilter.java    reads the token on every request
+
+  Every request carries the token. The backend reloads the real user row and
+  decides. A staff member from Shelter A cannot read Shelter B's pets even by
+  changing the URL, because ScopeGuard checks the shelter on the row.
+
+THE SENTENCE TO SAY:
+  "ProtectedRoute is convenience, not security. Anyone can edit localStorage
+   in devtools and write {"role":"ADMIN"} -- and they would get an empty
+   admin portal and a wall of 403s, because every request still carries their
+   real token and the server reloads their real row."
+
+  That is written in the comment at the top of ProtectedRoute.jsx and
+  AuthContext.jsx. It is worth quoting.
+
+  AuthContext also proves it: on boot it calls GET /auth/me with whatever
+  token is stored and BELIEVES THE SERVER, not localStorage.
+
+--------------------------------------------------------------------------------
+1.7  HOW A BUTTON REACHES THE DATABASE
+--------------------------------------------------------------------------------
+
+  src/lib/config.js       the backend address, in ONE place
+        export const API_BASE =
+          import.meta.env.VITE_API_URL || "http://localhost:8081/api/v1";
+
+  src/api/client.js       one Axios object built on that address. It
+                          automatically attaches the login token to every
+                          request, and on a 401 (token expired) it clears the
+                          token and sends the user to /login.
+
+  A page then does:
+
+      // reading when the page opens
+      useEffect(() => {
+        api.get("/pets").then(({ data }) => setPets(data));
+      }, []);
+
+      // writing when a button is clicked
+      const submit = async () => {
+        await api.post("/applications", { petId, message });
+        setDone(true);
+      };
+      <Button onClick={submit}>Submit application</Button>
+
+  THE FULL CHAIN:
+      click -> api.post -> JwtAuthFilter checks the token
+            -> SecurityConfig checks the role
+            -> Controller -> Service (the rules) -> Repository
+            -> MySQL -> JSON back -> setState -> screen redraws
+
+  WHERE WE ARE: auth, pets, applications, quiz, shelters and admin users are
+  wired to the real backend. Boarding, care records, reports and analytics
+  still read placeholder files in src/data/ -- those endpoints are the next
+  phase. The placeholder data is shaped like the database views, so switching
+  each page over is a one-line change, not a rewrite.
+
+
+================================================================================
+PART 2  --  MY FILES  (Faiyaj Jarif)
+================================================================================
+
+I own three things end to end:
+  1. How a person gets INTO the app  -- sign up, verify, log in, reset.
+  2. The HOME page they land on first.
+  3. Everything an ADOPTER does once inside -- browse, quiz, apply, track.
+Plus the shell the whole app runs in (App.jsx, main.jsx, the API client) and
+the DATABASE DESIGN.
+
+--------------------------------------------------------------------------------
+2.1  THE APP SHELL  --  I own the files everything else sits inside
+--------------------------------------------------------------------------------
+
+index.html                  (frontend root, not in src)
+      One empty <div id="root"> and a script tag loading main.jsx.
+      This is the ONLY HTML file in the project.
+
+src/main.jsx                18 lines
+      Starts React and stacks three wrappers, in this order:
+          <React.StrictMode>
+            <BrowserRouter>        routing must be outermost
+              <AuthProvider>       needs the router, because logout navigates
+                <App />
+      Order matters: AuthProvider redirects, so it has to be INSIDE the router.
+
+src/App.jsx                 147 lines   THE CONTROL FILE
+      Imports all 33 page components and lists every route.
+      Route groups are wrapped in ProtectedRoute by role.
+      Contains the comment explaining why /join comes before /register and
+      why the "*" 404 route must stay last.
+      >>> IF THE TEACHER ASKS "WHICH FILE CONTROLS THE APP?" -- THIS ONE.
+
+src/index.css               39 lines
+      The three @tailwind lines plus a few base rules.
+
+src/api/client.js           36 lines
+      The single Axios object. Two interceptors:
+        request  -- attaches "Authorization: Bearer <token>" from localStorage
+        response -- on 401 clears the token and redirects to /login
+      403 is deliberately NOT handled here: that is a role failure and the
+      page should show it inline, not bounce the user to login.
+
+src/lib/config.js           20 lines
+      API_BASE (and a derived WebSocket base). One place to change the host.
+
+src/lib/apiError.js         18 lines
+      Turns an Axios error into a sentence a person can read. Looks for the
+      backend's { "error": "..." } body first, then validation fields, then
+      falls back to "Could not reach the server".
+
+--------------------------------------------------------------------------------
+2.2  AUTHENTICATION  --  8 pages + 2 components + the context
+--------------------------------------------------------------------------------
+
+src/context/AuthContext.jsx          97 lines
+      Holds who is signed in, for the whole app. Exports useAuth() and
+      HOME_FOR (which portal each role lands on).
+      ON BOOT it calls GET /auth/me with whatever token is stored and BELIEVES
+      THE SERVER -- the cached user in localStorage only prevents a blank
+      screen during that call.
+      A "checking" flag is true until /auth/me answers, so routes do not
+      decide anything too early.
+      CONNECTED TO: api/client.js, and read by ProtectedRoute, PortalShell,
+      LoginPage, UsersPage, AdoptionApplicationPage.
+
+src/components/auth/ProtectedRoute.jsx     52 lines
+      The route guard used in App.jsx. Reads useAuth().
+      not signed in -> /login (remembering where they meant to go)
+      wrong role    -> their own portal
+      still checking-> a spinner
+      Its own comment says "THIS IS NOT SECURITY. It is navigation."
+
+src/components/auth/PasswordChecklist.jsx  42 lines
+      The live tick-list under a password box. Reads RULES from
+      lib/passwordPolicy.js so the UI and the server agree on the rules.
+      Used by RegisterPage, ResetPasswordPage, AcceptInvitePage, SettingsPage.
+
+src/lib/passwordPolicy.js            55 lines
+      RULES, passwordError() and DESCRIPTION. One source of truth for the
+      password rules, mirroring backend auth/PasswordPolicy.java.
+
+src/lib/mailProvider.js              46 lines
+      Works out which webmail to link to from an email address, so the
+      "Open Gmail" button on CheckEmailPage goes to the right place.
+
+THE 8 AUTH PAGES
+
+  RoleSelectPage.jsx        /join                 123 lines
+      Three role cards; the choice is carried to /register in router state.
+      Uses Logo, Button.
+      WHY FIRST: the register form differs per role, so we ask the role first.
+
+  RegisterPage.jsx          /register             264 lines
+      Full name, email, password, confirm, terms. Staff also pick a shelter.
+      CALLS: POST /auth/register, and GET /shelters to fill the shelter list.
+      Uses AuthLayout, Logo, Button, Input, Checkbox, Select, PasswordChecklist.
+      On success it goes to /check-email.
+
+  CheckEmailPage.jsx        /check-email          124 lines
+      "We sent you a link." A button opens the right webmail (mailProvider.js)
+      and a second button resends.
+      CALLS: POST /auth/resend-verification
+
+  VerifyEmailPage.jsx       /verify-email         144 lines
+      Where the emailed link lands. Reads the token from the query string and
+      confirms the address. Offers a resend if the token expired.
+      CALLS: POST /auth/resend-verification
+
+  LoginPage.jsx             /login                131 lines
+      Email, password, remember me.
+      CALLS: POST /auth/login. On success it stores the token through
+      AuthContext and sends the user to HOME_FOR[role] -- or back to the page
+      they were originally trying to reach.
+
+  ForgotPasswordPage.jsx    /forgot-password      127 lines
+      Email box. CALLS: POST /auth/forgot-password
+
+  ResetPasswordPage.jsx     /reset-password       138 lines
+      New password + confirm, with the live checklist. The token in the query
+      string is the whole of the person's authority here.
+      CALLS: POST /auth/reset-password
+
+  AcceptInvitePage.jsx      /accept-invite        144 lines
+      Where a staff invitation email lands. The invited person has no account
+      yet, so the token in the link is their authority. They set a password
+      and the account is created.
+      CALLS: POST /auth/accept-invite
+      >>> THIS IS THE OTHER HALF OF MUKARARAM'S "Invite Staff" BUTTON. He
+          sends the invite from /admin/users; it arrives here.
+
+--------------------------------------------------------------------------------
+2.3  HOME PAGE
+--------------------------------------------------------------------------------
+
+src/pages/public/LandingPage.jsx      /          175 lines
+      Hero, how-it-works, a strip of featured pets, closing call to action.
+      BUTTONS: "Browse Pets" -> /pets,  "Take the Match Quiz",  "Learn more"
+      Uses PublicLayout, Button, Card, PetCard (Tonni's), CtaBand (Mukararam's)
+      Reads data/pets.js for the featured strip.
+      >>> This is the first thing the teacher sees. Demo it first.
+
+--------------------------------------------------------------------------------
+2.4  SITE FRAME  (components/layout -- 5 files, 255 lines)
+--------------------------------------------------------------------------------
+
+  PublicLayout.jsx     17   PublicNav + page + PublicFooter, nothing else
+  PublicNav.jsx        82   top menu; "Log in" and "Sign up" buttons; mobile
+                            menu uses useState
+  PublicFooter.jsx     55   footer links + Logo
+  AuthLayout.jsx       55   the centred card around all 8 auth pages
+  ScrollToTop.jsx      46   jumps to the top when the address changes.
+                            Sits in App.jsx INSIDE the Router but OUTSIDE
+                            Routes, so it sees every navigation.
+                            WHY IT EXISTS: an SPA never reloads, so without
+                            this a footer link drops you halfway down the
+                            next page.
+
+--------------------------------------------------------------------------------
+2.5  THE ADOPTER ROLE  --  9 pages + 5 components
+--------------------------------------------------------------------------------
+
+  AdopterDashboard.jsx        /app                    130 lines
+      Four number tiles (Active Applications, Active Boardings, Favorites,
+      Recommended Matches), recommended pets, recent applications.
+      Uses AdopterLayout, MetricTile, MatchCard, Card, Button.
+      Reads data/adopter.js.
+
+  ShelterPetsPage.jsx         /app/pets               150 lines
+      The catalogue for a signed-in adopter, with match scores and a
+      "Best match" sort. useMemo filters without re-running on every keystroke.
+      Uses AdopterLayout, MatchCard, Dropdown. Reads data/pets.js + data/adopter.js.
+
+  PetDetailPage.jsx           /app/pets/:id           163 lines
+      Full profile, health info, similar pets. Apply button leads to the form.
+      Uses AdopterLayout, Card, Button, StatusBadge, MatchCard.
+
+  AdoptionApplicationPage.jsx /app/pets/:id/apply     345 lines
+      MY BIGGEST AND MOST IMPORTANT PAGE. A multi-step form.
+      CALLS: GET /pets/${id}, GET /quiz/ELIGIBILITY/attempts/latest,
+             POST /applications
+      It checks whether the person has already taken the eligibility quiz; if
+      not, it opens EligibilityQuizModal before letting them submit.
+      Uses AdopterLayout, Card, Button, Input, StatusBadge,
+      EligibilityQuizModal, useAuth, API_BASE (for photo URLs).
+      >>> DEMO THIS. It is the end of the whole adopter journey and it is
+          fully wired to the backend.
+
+  MyApplicationsPage.jsx      /app/applications       267 lines
+      Tabs by status, each application with its state, and a withdraw action.
+      CALLS: GET /applications/mine, POST /applications/${id}/withdraw
+      Uses AdopterLayout, Card, Button, Tabs, SuccessModal.
+
+  RecommendationsPage.jsx     /app/recommendations    113 lines
+      Suggested pets with match scores, based on quiz traits.
+      Opens EligibilityQuizModal if the quiz has not been taken.
+      Uses AdopterLayout, MatchCard, EligibilityQuizModal, Card.
+
+  FavoritesPage.jsx           /app/favorites          104 lines
+      Saved pets with a sort dropdown, and an empty state when there are none.
+      >>> "SHOW ME AN EMPTY STATE" -- this page has one.
+
+  AdopterBoardingPage.jsx     /app/boarding           148 lines
+      Boarding bookings; requesting one opens BoardingQuizModal and confirms
+      with SuccessModal. Reads data/adopter.js (endpoint not built yet).
+
+  BoardingDetailPage.jsx      /app/boarding/:id       152 lines
+      One booking: dates, suite, cost, updates from the shelter.
+      Buttons "Message Shelter" and "View Full History".
+
+MY ADOPTER COMPONENTS
+
+  AdopterLayout.jsx           23   the frame around every /app page. A thin
+                                   wrapper around PortalShell (Tonni's) with
+                                   the adopter menu.
+  EligibilityQuizModal.jsx   190   the adoption-readiness quiz, as a pop-up.
+                                   CALLS: GET /quiz/${quizType}/questions and
+                                   POST /quiz/${quizType}/attempts -- the
+                                   questions come from MUKARARAM'S admin quiz
+                                   bank. FULLY WIRED TO THE BACKEND.
+                                   WHY A POP-UP: it interrupts a task; keeping
+                                   the pet visible behind means the user does
+                                   not lose their place.
+  BoardingQuizModal.jsx      224   same idea, for requesting a boarding stay.
+  MatchCard.jsx               57   one suggested pet + match score.
+                                   Button "View Profile". Built from Card,
+                                   Button, StatusBadge.
+  MetricTile.jsx              20   one number box on the dashboard.
+
+  data/adopter.js            123   placeholder rows for the adopter screens
+                                   whose endpoints are not built yet.
+
+--------------------------------------------------------------------------------
+2.6  THE DATABASE  --  I designed it
+--------------------------------------------------------------------------------
+
+  backend/src/main/resources/db/migration/
+      V1__init.sql                    the whole schema, 25 tables + 2 views
+      V2__seed_reference_data.sql     reference rows
+      V3__seed_shelters.sql           starting shelters
+      V4__email_verification.sql      verification tokens
+      V5__fix_token_hash_type.sql     a correction to V4
+      V6__quiz_type_integrity.sql     quiz constraints
+      V7__staff_invites.sql           the invite flow
+
+  DECISIONS I SHOULD BE ABLE TO DEFEND:
+    * MySQL 8.4 pinned, because CHECK constraints are only ENFORCED from
+      8.0.16 -- older servers parse and silently ignore them.
+    * BIGINT AUTO_INCREMENT, SIGNED. An unsigned parent key with a signed
+      child column is MySQL errno 150 and a confusing hour.
+    * DATETIME, never TIMESTAMP. MySQL has no timezone-aware type; TIMESTAMP
+      converts by session timezone and overflows in 2038. We store UTC by
+      convention.
+    * DECIMAL for money, never FLOAT.
+    * ENGINE=InnoDB -- required for BOTH foreign keys and transactions.
+    * NEVER edit a migration that has already run. Flyway stores a checksum
+      and refuses to start. Add a new V8 instead.
+    * The tables were derived FROM the finished Figma screens -- every table
+      exists to serve a screen that was drawn first.
+
+--------------------------------------------------------------------------------
+2.7  IF THE TEACHER SAYS "SHOW ME..."
+--------------------------------------------------------------------------------
+
+  "where all the routes are"     src/App.jsx
+  "how the app starts"           index.html -> src/main.jsx -> src/App.jsx
+  "the login form"               /login          pages/auth/LoginPage.jsx
+  "code that calls the backend"  api.post in LoginPage + src/api/client.js
+  "how the token is attached"    the request interceptor in api/client.js
+  "how you know who is signed in" src/context/AuthContext.jsx
+  "how you block the admin page" src/components/auth/ProtectedRoute.jsx
+                                 + backend security/SecurityConfig.java
+  "password rules"               src/lib/passwordPolicy.js
+                                 + components/auth/PasswordChecklist.jsx
+  "email verification"           /check-email, /verify-email
+  "the home page"                /               pages/public/LandingPage.jsx
+  "the adopter dashboard"        /app            pages/adopter/AdopterDashboard.jsx
+  "the adoption form"            /app/pets/1/apply
+                                 pages/adopter/AdoptionApplicationPage.jsx
+  "a pop-up / modal"             components/adopter/EligibilityQuizModal.jsx
+  "an empty state"               /app/favorites
+  "the database design"          backend/.../db/migration/V1__init.sql
+  "scroll behaviour"             components/layout/ScrollToTop.jsx
+
+--------------------------------------------------------------------------------
+2.8  WHAT I DEPEND ON, AND WHO DEPENDS ON ME
+--------------------------------------------------------------------------------
+
+I IMPORT FROM TONNI:
+    components/ui/*        Button, Input, Checkbox, Card, Modal, Dropdown,
+                           Tabs, SuccessModal, Field  -- on nearly every page
+    components/portal/PortalShell   AdopterLayout wraps it
+    components/pets/StatusBadge     on 3 adopter pages
+    data/pets.js                    LandingPage + ShelterPetsPage
+
+I IMPORT FROM MUKARARAM:
+    components/brand/Logo, PawIcon  in the nav, footer and all 8 auth pages
+    components/sections/CtaBand     on the landing page
+
+THEY IMPORT FROM ME:
+    App.jsx                every page they write must be registered here --
+                           they add routes in their own marked block
+    api/client.js          every backend call in the project
+    lib/config.js, lib/apiError.js
+    context/AuthContext    PortalShell and UsersPage read useAuth()
+    components/layout/*    every public page uses PublicLayout
+    components/auth/PasswordChecklist   SettingsPage uses it
+
+BECAUSE I OWN App.jsx AND THE SHELL, I merge everyone's branches. Nobody
+else edits App.jsx outside their own marked route block.

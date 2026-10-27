@@ -1,0 +1,305 @@
+===============================================================================
+PAWHOME - PROJECT PROPOSAL
+Presentation speech for slides 9 to 17   -   MEMBER TWO
+CSE 3522 - Database Management Systems Laboratory
+===============================================================================
+
+  About 820 words. Roughly 5 and a half minutes at a calm pace.
+  Short sentences, simple words. Nothing hard to say out loud.
+  Text in (brackets) is timing. Text in [square brackets] is a stage
+  direction - do not read it out. A "/" marks a place to breathe.
+
+  Slide 14 is the long one. You open the draw.io file there and walk
+  through pages 1 to 6, in order. Everything else is short.
+
+  Member One hands over after slide 8. Start by carrying straight on -
+  do not re-introduce the project.
+
+  If you need this under 5 minutes, see TO CUT IT SHORTER at the end.
+
+
+-------------------------------------------------------------------------------
+SLIDE 9 - PROJECT OVERVIEW                                             (20 sec)
+-------------------------------------------------------------------------------
+
+PawHome has three roles, and each one gets its own portal.
+
+An adopter browses pets, takes the quiz, applies to adopt, and books
+boarding.
+
+Shelter staff list pets, review applications, log the daily care, and
+record vaccinations.
+
+An admin approves staff accounts, manages shelters, and runs reports.
+
+
+-------------------------------------------------------------------------------
+SLIDE 10 - SCOPE                                                       (23 sec)
+-------------------------------------------------------------------------------
+
+On the left is what we will build. Adoption from start to finish.
+Boarding with daily care. The quiz. Health records. And role-based
+access.
+
+On the right is what we will not build. No online payment. No transport.
+No mobile app. No veterinary advice.
+
+Fees are recorded, but they are not collected. Payment is out of scope
+on purpose.
+
+
+-------------------------------------------------------------------------------
+SLIDE 11 - TECHNOLOGY STACK                                            (20 sec)
+-------------------------------------------------------------------------------
+
+React on the frontend. Spring Boot with Java on the backend. MySQL 8.4
+running in Docker. And JWT with BCrypt for security.
+
+One thing to mention here. Every change to the database goes through a
+Flyway migration file. So both of our laptops always run exactly the
+same database.
+
+
+-------------------------------------------------------------------------------
+SLIDE 12 - THE DATABASE                                                (32 sec)
+-------------------------------------------------------------------------------
+
+Now the database itself.
+
+It is one MySQL schema. Twenty-seven tables and fifty-three foreign keys.
+
+The whole design is built around two tables.
+
+The first one is USERS. Twenty of the twenty-seven tables point back to
+it. It holds adopters, shelter staff and admins - all in one table, with
+a role column.
+
+The second one is PETS. Nine tables point back to that.
+
+Everything else sits in groups around those two. Shelters and boarding
+suites. Traits and photos. The five quiz tables. Applications and
+adoptions. And boarding, care logs and vaccinations.
+
+On the right are the links to our draw.io diagrams.
+
+
+-------------------------------------------------------------------------------
+SLIDE 13 - SCHEMA AND NORMALISATION                                    (40 sec)
+-------------------------------------------------------------------------------
+
+This slide is about what the database refuses to store.
+
+On the left are the constraints. An email must be unique. A staff member
+must belong to a shelter, and an adopter must not - that is a CHECK
+constraint. Role and status are fixed lists, not free text.
+
+On the right is normalisation. We are in third normal form. That means
+one fact is written in one place only. A shelter's city lives on the
+shelter table - it is not repeated on every pet.
+
+We break that rule in five places, on purpose. Most are snapshots. The
+applicant's address is copied when they apply, so the application still
+shows where they lived at that time, even after they move house.
+
+
+===============================================================================
+SLIDE 14 - THE ERD, PAGE BY PAGE                                  (about 2 min)
+[Open docs/pawhome-erd.drawio now. Go through pages 1 to 6 in order.]
+===============================================================================
+
+--- PAGE 1 : THE WHOLE SCHEMA ---
+
+This is the complete diagram. / It looks like a lot.
+
+But it is organised around just two tables. [Point to users, then to
+pets.] Twenty tables point back to USERS. Nine point back to PETS.
+
+So the way to read it is not left to right. Find the two hubs, then
+follow the lines outward. That is what I will do now.
+
+
+--- PAGE 2 : IDENTITY AND SHELTERS ---
+
+We start at the root of the whole design: SHELTERS.
+
+This table has no foreign keys at all. Nothing sits above it. Every
+other table eventually traces back here.
+
+Next, USERS. This is the single most important table in the design.
+
+The decision here is that we did NOT build three tables for three kinds
+of people. No separate adopters table, no separate staff table. One
+USERS table with a ROLE column - ADOPTER, STAFF or ADMIN. [Point to the
+role row.]
+
+The key attributes are:
+
+  ID              - primary key
+  EMAIL           - UNIQUE. This is what someone logs in with.
+  ROLE            - which of the three kinds of account this is
+  APPROVAL_STATUS - PENDING, APPROVED or REJECTED
+  EMAIL_VERIFIED  - has this person confirmed their address
+  IS_ACTIVE       - the kill switch
+  SHELTER_ID      - nullable, because only staff belong to a shelter
+
+The small table below is USER_TOKENS - email verification and password
+reset. Look at the column name: TOKEN_HASH, not "token". We never store
+the link we emailed, only a hash of it. So a leaked database is not a
+stack of live "take over this account" links.
+
+
+--- PAGE 3 : PETS, TRAITS AND HEALTH ---
+
+PETS is the second hub.
+
+The interesting column is OWNER_ID, and it is nullable for a real
+reason. A pet here is one of two things. Either it is a shelter animal
+waiting to be adopted - then it has no owner, so this is NULL. Or it is
+somebody's own pet in for boarding - and then OWNER_ID points at that
+person.
+
+One table, two situations, separated by whether a column is NULL.
+
+Also on this page is HEALTH_REMINDERS_SENT. It has a UNIQUE constraint
+on the vaccination plus the reminder kind. That one constraint is what
+makes sure an owner is emailed about a due vaccination exactly once, and
+not every time the job runs.
+
+
+--- PAGE 4 : THE MATCHING QUIZ ---
+
+The quiz is five tables.
+
+QUIZ_QUESTIONS holds the questions. QUIZ_OPTIONS holds the possible
+answers to each question. QUIZ_ATTEMPTS is one person sitting the quiz
+once. QUIZ_ANSWERS is what they picked.
+
+And OPTION_TRAITS is the scoring rule - it says which traits each answer
+counts towards. That is how we turn "I live in a small flat and I work
+long hours" into a recommendation for a calm, independent cat.
+
+
+--- PAGE 5 : ADOPTION ---
+
+Two tables here, and the difference between them matters.
+
+ADOPTION_APPLICATIONS is a request. Somebody applied. It may be
+approved, it may be declined.
+
+ADOPTIONS is the completed fact. The animal actually went home.
+
+We kept them separate because an application is a conversation and an
+adoption is a permanent record. Merging them would give us a table where
+half the rows describe something that never happened.
+
+
+--- PAGE 6 : BOARDING AND CARE ---
+
+BOARDING_REQUESTS is the widest table in the schema. It carries six
+foreign keys at once - the pet, the owner, the shelter, the suite, the
+quiz attempt, and the staff member who reviewed it. A boarding booking
+genuinely does touch six different things.
+
+Hanging off it are BOARDING_INSTRUCTIONS, the owner's care notes.
+BOARDING_UPDATES, the photo updates staff post back to the owner. And
+CARE_TASKS and CARE_LOGS - what needs doing each day, and what actually
+got done.
+
+That is the whole schema, in six pages.
+
+
+-------------------------------------------------------------------------------
+SLIDE 16 - RISKS AND DEPENDENCIES                                      (22 sec)
+-------------------------------------------------------------------------------
+
+Three risks.
+
+First, being a team of two. It will be tough to implement every feature,
+but we will do our best.
+
+Second, email is external. Verification and reminders depend on an
+outside mail provider.
+
+And third, schema drift. Every change must go through a migration file,
+or our two databases stop matching.
+
+
+-------------------------------------------------------------------------------
+SLIDE 17 - CLOSING                                                     (12 sec)
+-------------------------------------------------------------------------------
+
+That is PawHome.
+
+One platform, from first browse to going home.
+
+Thank you. We are happy to take your questions.
+
+
+===============================================================================
+DELIVERY NOTES
+===============================================================================
+
+  Slide 12 - Slow down here. Say "two hubs" and point at users, then at
+             pets. If they remember one thing about the database, it
+             should be that.
+
+  Slide 13 - If they ask "is it fully third normal form?", say yes, with
+             five documented exceptions, and name one - the applicant
+             address snapshot. Never say "fully normalised" on its own.
+
+  Slide 14 - Point at each page as you name it. Do not read columns out,
+             except the USERS list on page 2 - that one is worth reading,
+             it is the heart of the design.
+
+  Slide 16 - Say the risks plainly and move on. Do not apologise for
+             being two people.
+
+  Everywhere - Pause for one second between slides.
+
+
+===============================================================================
+TO CUT IT SHORTER
+===============================================================================
+
+  This runs about 5 and a half minutes. To get near 5, drop these.
+  Nothing is lost -
+  the slides still show it all.
+
+  Slide 10 - "No online payment. No transport. No mobile app. No
+              veterinary advice."  (the slide lists them)
+
+  Slide 11 - the first paragraph. Just say "our stack is on the slide"
+              and go to the migration point.
+
+  Slide 14 - on page 2, the seven-line USERS attribute list. Say instead:
+              "one users table, one role column, and three separate flags
+              that control whether you can log in."
+
+  Slide 14 - on page 3, the HEALTH_REMINDERS_SENT paragraph.
+
+
+===============================================================================
+LIKELY QUESTIONS
+===============================================================================
+
+  Q: Why one users table for three kinds of people?
+  A: They share almost every column and all of the login logic. One table
+     with a role column, plus a CHECK constraint, keeps them apart without
+     copying everything three times.
+
+  Q: Where is the many-to-many?
+  A: Three places. Pets and traits, quiz options and traits, and users and
+     pets for favourites. Each one is a junction table, and its primary key
+     is the pair of foreign keys.
+
+  Q: Why store the score on the quiz attempt?
+  A: Because staff can edit the scoring weights later. If we recalculated
+     it, an old attempt would silently change its result.
+
+  Q: Which index, and why that one?
+  A: Pets, on shelter id and status. That is the exact pair the catalogue
+     filters on, so it is the query that runs most often.
+
+  Q: Why is SHELTER_ID allowed to be NULL?
+  A: Because only staff belong to a shelter. Every adopter has NULL there,
+     and a CHECK constraint stops an adopter from claiming one.

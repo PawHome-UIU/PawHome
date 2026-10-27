@@ -1,0 +1,200 @@
+PAWHOME — ADOPTER PORTAL
+What each page does
+================================================================================
+
+The adopter portal lives under /app. The sidebar has seven entries; three more
+pages are reached from inside them, and the header carries two more.
+
+Everything below reads and writes the real database. No page uses sample data.
+
+
+================================================================================
+1. DASHBOARD                                                             /app
+================================================================================
+The landing page. Four counts and the top of three lists.
+
+  - Four tiles, each a link to its own page:
+      Active Applications ... only ones still waiting for an answer
+      Favourites Saved
+      Recommended Matches .... only pets that share at least one trait with you
+      Active Boardings ....... accepted or currently staying
+  - Top three recommended pets, with working hearts
+  - Your three most recent applications, each with a progress rail
+      (Submitted -> Under review -> Decision)
+  - Your next boarding stay, with a line saying how many days until drop-off,
+    or that the pet is staying now
+  - Greets you by your real first name
+
+If you have not taken the personality quiz, the recommendations block is
+replaced by a prompt to take it, rather than showing everything at 0%.
+
+
+================================================================================
+2. SHELTER PETS                                                     /app/pets
+================================================================================
+The catalogue of animals available to adopt.
+
+  - Search by name or breed
+  - Filter by species, size and gender
+  - Sort by best match or by name
+  - A heart on every card to save or unsave
+  - Each card shows the pet's photo, breed, age and match percentage
+
+Only AVAILABLE pets appear. Pets people own from home never appear here.
+
+
+================================================================================
+3. PET PROFILE                                                  /app/pets/:id
+================================================================================
+One animal in full.
+
+  - Photo gallery with thumbnails
+  - Breed, age, sex, size, weight, adoption fee, description
+  - Personality traits, and your match score with the traits you share
+  - Health card: vaccinated / neutered / microchipped, plus the vaccination
+    list with dates and anything overdue
+  - Shelter name and city
+  - Save to favourites
+  - Apply to adopt
+
+The vet's name, batch numbers and the certificate document are not shown here.
+Those stay with the pet's owner and the shelter holding it.
+
+
+================================================================================
+4. ADOPTION APPLICATION                                   /app/pets/:id/apply
+================================================================================
+The form you send to a shelter.
+
+  - Take the eligibility quiz first; the form will not submit without it
+  - Your details: name, email, phone, address, city
+  - Your home: home type, time at home, pet experience, other pets or children
+  - The score comes from your quiz attempt on the server, never from the form
+
+Your answers are stored as a copy on the application, so what the shelter reads
+later is what you said when you sent it, even if you move house afterwards.
+
+
+================================================================================
+5. RECOMMENDATIONS                                       /app/recommendations
+================================================================================
+Pets ranked against your personality quiz answers.
+
+  - Take or retake the personality quiz
+  - Your traits shown as chips
+  - Top two matches as large cards, each listing which of your traits the pet
+    has and which it does not
+  - The rest as a grid, best match first
+  - Hearts work here too
+
+Without a quiz attempt the whole page becomes a prompt to take it.
+
+
+================================================================================
+6. MY APPLICATIONS                                          /app/applications
+================================================================================
+Everything you have applied for and where each one got to.
+
+  - Tabs: All / Pending / Approved / Declined / Withdrawn
+  - Each row: pet, shelter, date applied, status
+  - Detail panel with your eligibility score
+  - Withdraw an application that has not been decided yet
+  - If declined, the shelter's written reason is shown in full
+  - If approved, the adoption date and the fee paid
+
+
+================================================================================
+7. MY PETS                                                      /app/my-pets
+================================================================================
+Every animal you own — adopted through PawHome, or one you already had.
+
+  - Add a pet from home: name, species, breed, age, sex, size, weight,
+    neutered, microchipped, description
+  - Edit or remove a pet you added yourself
+  - Photos: upload several, choose the cover, delete one
+  - Health: vaccination records, and the certificate as a download
+
+Pets adopted through PawHome are read-only here. Their record belongs to the
+shelter that rehomed them, so you can view their health and photos but not
+change them. A pet cannot be removed once it has any boarding history.
+
+
+================================================================================
+8. BOARDING                                                     /app/boarding
+================================================================================
+Booking a stay while you travel.
+
+  - Your pets, each with a Request Boarding button
+  - Step 1: the boarding quiz
+  - Step 2: the booking form
+      shelter, drop-off and collection dates, emergency contact,
+      whether you authorise emergency vet care,
+      care instructions (dietary, medication, comfort and play, exercise),
+      an optional vaccination certificate for a pet from home
+  - A running cost estimate: nights x the shelter's nightly rate
+  - History of every stay you have requested, with its status
+
+
+================================================================================
+9. BOARDING DETAIL                                          /app/boarding/:id
+================================================================================
+One stay, while it happens.
+
+  - Progress rail: Requested -> Accepted -> Active -> Completed
+  - Nights, assigned suite, estimated cost
+  - Your care instructions, grouped by category
+  - Live updates from the shelter — feeding, playtime, medication, health —
+    with photos, newest first
+  - Shelter address and phone
+  - Cancel a stay that has not started
+
+If the shelter declined, their written reason is shown here instead of the rail.
+
+
+================================================================================
+10. FAVOURITES                                                 /app/favorites
+================================================================================
+Pets you saved.
+
+  - Sort by recently saved, name, or match score
+  - Remove from favourites
+  - Adopted and unavailable pets stay in the list rather than vanishing, so you
+    find out what happened to them
+
+
+================================================================================
+11. SETTINGS                                                    /app/settings
+================================================================================
+Your account. Three tabs.
+
+  Profile        name, phone, profile picture
+                 (email is read-only — changing it needs re-verification)
+  Security       change your password
+                 doing so signs out every other device immediately
+  Notifications  application updates, boarding updates, vaccination reminders,
+                 and whether any of it also reaches your inbox
+                 saved the moment you flip a switch
+
+
+================================================================================
+IN THE HEADER — ON EVERY PAGE
+================================================================================
+  Bell     Unread count, and a dropdown of recent notifications. New ones
+           arrive live without refreshing the page. Click one to jump to what
+           it is about. Mark one or all as read.
+
+           You are notified when an application is approved or declined, when
+           a boarding request is accepted or refused, and every time the
+           shelter posts an update about a pet staying with them.
+
+  Gear     Settings.
+
+
+================================================================================
+NOT BUILT FOR ADOPTERS
+================================================================================
+  - Messaging a shelter. There is no messages table in the database, so rather
+    than show a button that does nothing, the shelter's phone number is given
+    on the boarding detail page.
+  - Pagination. Every list returns everything at once, which is fine at the
+    sizes this project handles.

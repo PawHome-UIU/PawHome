@@ -1,0 +1,549 @@
+================================================================================
+PAWHOME  --  MIR MUKARARAM HOSSAIN
+MY PART:  Services page  ·  About page  ·  the whole Admin console
+          plus the brand and the repeated marketing sections
+BRANCH:   feature/admin-public
+SIZE:     26 files, 4,388 lines   (team average 4,442)
+================================================================================
+
+================================================================================
+PART 1  --  THE SHARED FOUNDATION
+Every teammate must be able to explain this part. It is identical in all
+three documents.
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  WHY WE CHOSE REACT
+--------------------------------------------------------------------------------
+
+Five real reasons, not "it is popular":
+
+1. REUSE.  We have 29 screens. Without React we would write the same button,
+   the same input box and the same pop-up dialog on every one of them. In
+   React we wrote Button.jsx ONCE and imported it 29 times. Change the button
+   style in one file and every screen updates.
+
+2. THE SCREEN FOLLOWS THE DATA.  In plain HTML+JavaScript you have to find
+   the element and change it by hand every time something happens. In React
+   you change the DATA and React redraws whatever depended on it. Fewer bugs,
+   because there is no way for the screen and the data to disagree.
+
+3. SINGLE PAGE APPLICATION.  The browser loads one HTML file once. After that
+   React swaps the content when the address changes. No white flash, no full
+   reload -- it feels like a phone app rather than a website.
+
+4. READY-MADE ECOSYSTEM.  Routing, charts, icons and HTTP all have mature
+   React libraries. We did not have to build any of them.
+
+5. IT LETS THREE PEOPLE WORK AT ONCE.  A React component is just a file. We
+   split the project so each person owns whole folders nobody else edits,
+   which is why we get almost no merge conflicts.
+
+--------------------------------------------------------------------------------
+1.2  HOW REACT ACTUALLY WORKS  (the five ideas)
+--------------------------------------------------------------------------------
+
+COMPONENT   A JavaScript function that returns JSX (HTML-looking code).
+            Its name starts with a capital letter.
+                function PetCard() { return <div>Cooper</div>; }
+
+JSX         HTML written inside JavaScript. Vite converts it to real
+            JavaScript before the browser sees it.
+
+PROPS       Data passed INTO a component from its parent. Read-only.
+                <PetCard name="Cooper" age="3 months" />
+
+STATE       Data that CHANGES inside a component. Declared with useState.
+            When you call the setter, React redraws that component.
+                const [open, setOpen] = useState(false);
+                setOpen(true);        // -> React redraws
+
+EFFECT      Code that runs AFTER the screen is drawn -- used for fetching
+            data. Declared with useEffect.
+                useEffect(() => { api.get("/pets").then(...) }, []);
+            The empty [] means "run once when the page opens".
+
+WHY IT IS FAST:  React keeps a lightweight copy of the page in memory (the
+"virtual DOM"). When data changes it compares old and new, and updates only
+the parts that actually differ instead of redrawing everything.
+
+OTHER HOOKS WE USE:
+  useMemo         remember a calculated value so filtering does not re-run on
+                  every keystroke
+  useParams       read the changing part of an address, e.g. the 7 in /pets/7
+  useNavigate     move to another page from code, e.g. after a form is saved
+  useLocation     read the current address
+  useContext      read shared data from anywhere without passing props down
+                  through every level -- this is how AuthContext works
+
+--------------------------------------------------------------------------------
+1.3  THE ARCHITECTURE  --  how each section provides everything
+--------------------------------------------------------------------------------
+
+Three programs run at the same time and talk over the network:
+
+    BROWSER  (React + Vite, port 5174)
+        |  Axios request, carrying the login token
+        v
+    BACKEND  (Spring Boot, port 8081)
+        |  JDBC
+        v
+    DATABASE (MySQL 8.4 in Docker, port 3307)
+
+The browser NEVER touches the database directly. Everything goes through the
+backend, because the backend is the only place that can be trusted to check
+"are you allowed to do this?"
+
+INSIDE THE FRONTEND there are four layers. Each provides something different:
+
+  PAGES         src/pages/...
+                One file = one full screen. A page knows WHAT to show and WHEN
+                to fetch. It holds the state and the handlers.
+
+  COMPONENTS    src/components/...
+                Reusable pieces. A component knows HOW something looks. It
+                takes props and gives back JSX. It does not fetch data.
+                  ui/         buttons, inputs, modals -- used by everyone
+                  layout/     public nav bar, footer, page frames
+                  portal/     the sidebar shell for logged-in areas
+                  admin/ staff/ adopter/   pieces used by only that portal
+                  pets/ brand/ sections/   shared small pieces
+
+  DATA + API    src/api/client.js   the one place that talks to the backend
+                src/lib/            small helpers (address, error text, rules)
+                src/data/           placeholder data for screens whose
+                                    endpoints are not built yet
+
+  SHELL         index.html -> src/main.jsx -> src/App.jsx
+                main.jsx starts React and wraps everything in BrowserRouter
+                and AuthProvider. App.jsx lists every route.
+
+THE RULE WE FOLLOW: pages fetch, components display. A component that fetches
+its own data cannot be reused anywhere else.
+
+--------------------------------------------------------------------------------
+1.4  LIBRARIES AND DEPENDENCIES  (exact versions, from package-lock.json)
+--------------------------------------------------------------------------------
+
+FRONTEND -- runtime
+  react              19.2.8    builds the screens out of components
+  react-dom          19.2.8    puts React components into the browser page
+  react-router-dom   7.18.3    decides which page shows for which address
+  axios              1.20.0    sends HTTP requests to the backend
+  recharts           3.10.1    draws the charts on the admin pages
+  react-icons        5.7.0     the icon set
+
+FRONTEND -- build tools (not shipped to the user)
+  vite               8.2.2     dev server + production build
+  @vitejs/plugin-react         lets Vite understand JSX
+  tailwindcss        3.4.19    styling with utility classes
+  postcss + autoprefixer       runs Tailwind and adds browser prefixes
+  eslint (+ plugins)           catches mistakes before they run
+
+  WHY TAILWIND 3 AND NOT 4:  version 4 changed how it is configured. Our
+  tailwind.config.js and postcss.config.js are written for version 3.
+  Upgrading would break every style in the project.
+
+BACKEND
+  Spring Boot 3.4.1, Java 17, Maven
+  spring-boot-starter-web            REST endpoints
+  spring-boot-starter-data-jpa       Hibernate, database access
+  spring-boot-starter-validation     @Valid on incoming data
+  spring-boot-starter-security       login and permissions
+  spring-boot-starter-mail           verification and invite emails
+  jjwt 0.12.5                        creates and reads the login token
+  mysql-connector-j                  the MySQL driver
+  flyway-core + flyway-mysql         builds the tables from .sql files
+                                     (flyway-core ALONE will not do MySQL --
+                                      Flyway 10 split each database into its
+                                      own module)
+  lombok, mapstruct                  less boilerplate in Java classes
+
+DATABASE
+  MySQL 8.4 (InnoDB, utf8mb4) in Docker.
+  Version pinned on purpose: CHECK constraints are only ENFORCED from MySQL
+  8.0.16. Older servers read them and silently ignore them, which is worse
+  than not having them.
+
+PORTS
+  3307  MySQL      (3306 is any MySQL already on the laptop)
+  8081  backend
+  5174  frontend dev server
+  4174  frontend production preview
+
+--------------------------------------------------------------------------------
+1.5  ROUTING  --  which page shows for which address
+--------------------------------------------------------------------------------
+
+THE CONTROL FILE IS  src/App.jsx.  Every address in the whole application is
+listed there. If a page is not in App.jsx, you cannot reach it.
+
+  index.html          one empty <div id="root">, loads main.jsx
+  src/main.jsx        starts React; wraps the app in
+                        <BrowserRouter>   -- the router
+                          <AuthProvider>  -- who is signed in
+                            <App />
+  src/App.jsx         the route table
+
+THE FIVE ROUTE GROUPS:
+
+  PUBLIC   /  /pets  /pets/:id  /features  /services  /about
+  AUTH     /join  /login  /register  /forgot-password
+           /check-email  /verify-email  /reset-password  /accept-invite
+  ADMIN    /admin  /admin/shelters  /admin/users  /admin/analytics
+           /admin/reports  /admin/quiz  /admin/settings
+  STAFF    /staff  /staff/pets  /staff/applications  /staff/applications/:id
+           /staff/care  /staff/boarding  /staff/settings
+  ADOPTER  /app  /app/pets  /app/pets/:id  /app/pets/:id/apply
+           /app/recommendations  /app/applications  /app/boarding
+           /app/boarding/:id  /app/favorites  /app/settings
+  404      *
+
+TWO THINGS TO REMEMBER:
+  * ":id" is a changing value. /app/pets/7 shows pet 7; the page reads it
+    with useParams().
+  * The "*" 404 route MUST STAY LAST. React Router picks the FIRST match and
+    "*" matches everything -- if it moves up, every page becomes a 404.
+
+--------------------------------------------------------------------------------
+1.6  HOW WE STOP AN ADOPTER SEEING THE ADMIN PAGES
+--------------------------------------------------------------------------------
+
+TWO LAYERS. Explain both -- the second one is where the marks are.
+
+LAYER 1 -- THE BROWSER (navigation only, NOT security)
+  src/context/AuthContext.jsx   holds who is signed in
+  src/components/auth/ProtectedRoute.jsx   wraps whole route groups
+
+  In App.jsx:
+      <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
+        ...all the /admin routes...
+      </Route>
+
+  Three outcomes:
+      not signed in   -> sent to /login, remembering where they were going
+      wrong role      -> sent to their own portal (not an error page -- they
+                         are not doing anything wrong, just in the wrong place)
+      right role      -> the page renders
+
+  While the app is still asking the server who you are, ProtectedRoute shows
+  a spinner. Without that, refreshing on /admin would flash the login page.
+
+LAYER 2 -- THE SERVER (this is the real security)
+  backend .../security/SecurityConfig.java   which endpoints need a login
+  backend .../security/ScopeGuard.java       which rows you may touch
+  backend .../security/JwtAuthFilter.java    reads the token on every request
+
+  Every request carries the token. The backend reloads the real user row and
+  decides. A staff member from Shelter A cannot read Shelter B's pets even by
+  changing the URL, because ScopeGuard checks the shelter on the row.
+
+THE SENTENCE TO SAY:
+  "ProtectedRoute is convenience, not security. Anyone can edit localStorage
+   in devtools and write {"role":"ADMIN"} -- and they would get an empty
+   admin portal and a wall of 403s, because every request still carries their
+   real token and the server reloads their real row."
+
+  That is written in the comment at the top of ProtectedRoute.jsx and
+  AuthContext.jsx. It is worth quoting.
+
+  AuthContext also proves it: on boot it calls GET /auth/me with whatever
+  token is stored and BELIEVES THE SERVER, not localStorage.
+
+--------------------------------------------------------------------------------
+1.7  HOW A BUTTON REACHES THE DATABASE
+--------------------------------------------------------------------------------
+
+  src/lib/config.js       the backend address, in ONE place
+        export const API_BASE =
+          import.meta.env.VITE_API_URL || "http://localhost:8081/api/v1";
+
+  src/api/client.js       one Axios object built on that address. It
+                          automatically attaches the login token to every
+                          request, and on a 401 (token expired) it clears the
+                          token and sends the user to /login.
+
+  A page then does:
+
+      // reading when the page opens
+      useEffect(() => {
+        api.get("/pets").then(({ data }) => setPets(data));
+      }, []);
+
+      // writing when a button is clicked
+      const submit = async () => {
+        await api.post("/applications", { petId, message });
+        setDone(true);
+      };
+      <Button onClick={submit}>Submit application</Button>
+
+  THE FULL CHAIN:
+      click -> api.post -> JwtAuthFilter checks the token
+            -> SecurityConfig checks the role
+            -> Controller -> Service (the rules) -> Repository
+            -> MySQL -> JSON back -> setState -> screen redraws
+
+  WHERE WE ARE: auth, pets, applications, quiz, shelters and admin users are
+  wired to the real backend. Boarding, care records, reports and analytics
+  still read placeholder files in src/data/ -- those endpoints are the next
+  phase. The placeholder data is shaped like the database views, so switching
+  each page over is a one-line change, not a rewrite.
+
+
+================================================================================
+PART 2  --  MY FILES  (Mir Mukararam Hossain)
+================================================================================
+
+I own two ends of the product:
+  1. The PUBLIC INFORMATION pages -- Services, About, and the 404.
+  2. The whole ADMIN CONSOLE -- shelters, users, staff invitations, the quiz
+     question bank, analytics and reports.
+Plus the brand and the repeated section blocks that make the public site look
+like one product.
+
+My admin pages complete the process: I approve the shelters that Tonni's staff
+work in, I invite the staff members whose accounts Faiyaj's invite page
+creates, and I own the quiz questions that Faiyaj's adopter quiz asks.
+
+--------------------------------------------------------------------------------
+2.1  PUBLIC INFORMATION PAGES  --  3 pages
+--------------------------------------------------------------------------------
+
+  ServicesPage.jsx        /services            196 lines
+      Adoption and boarding services explained, plus an FAQ.
+      BUTTON: "Request Boarding".
+      Uses PublicLayout (Faiyaj's), SectionHeading, FeatureRow, CtaBand,
+      Accordion (Tonni's), Card, Button.
+      >>> "SHOW ME SOMETHING INTERACTIVE ON THE PUBLIC SITE" -- the FAQ
+          accordion is here.
+
+  AboutPage.jsx           /about               126 lines
+      Who we are, the mission, the team.
+      Uses PublicLayout, SectionHeading, FeatureRow, CtaBand, Card.
+
+  NotFoundPage.jsx        the "*" route         49 lines
+      Shown for any address that does not exist. Paw icon, the address the
+      person typed (read with useLocation), "Back to home" button.
+      Uses PublicLayout, Button, PawIcon.
+      >>> IN App.jsx THIS ROUTE MUST STAY LAST. React Router picks the FIRST
+          match and "*" matches everything -- move it up and every page in
+          the app becomes a 404.
+
+--------------------------------------------------------------------------------
+2.2  BRAND AND SECTIONS  --  the pieces that hold the look together
+--------------------------------------------------------------------------------
+
+src/components/brand/  --  2 files, 47 lines
+  Logo.jsx             34   the wordmark, built from PawIcon
+  PawIcon.jsx          13   the paw symbol
+  USED BY: Faiyaj's PublicNav, PublicFooter, AuthLayout and all 8 auth pages,
+  and Tonni's PortalShell. Two small files that appear on every screen.
+
+src/components/sections/  --  3 files, 86 lines
+  SectionHeading.jsx   21   a titled section header
+  FeatureRow.jsx       33   icon + text + image row
+  CtaBand.jsx          32   the coloured "get started" strip (uses Button)
+  USED BY: my About and Services pages, Tonni's Features and Browse pages,
+  and Faiyaj's Landing page.
+  >>> WHY THEY EXIST: without them each of the five public pages would invent
+      its own spacing and heading size, and the site would look like five
+      different products.
+
+--------------------------------------------------------------------------------
+2.3  THE ADMIN CONSOLE  --  6 pages
+--------------------------------------------------------------------------------
+
+  AdminDashboard.jsx        /admin                 208 lines
+      Platform overview: number tiles, a bar chart of adoptions by month, a
+      pie chart of applications by status, a shelter table, recent activity.
+      CALLS: GET /admin/shelters   (the shelter table is live)
+      CHARTS: Recharts -- BarChart, PieChart, ResponsiveContainer, XAxis,
+              YAxis, Tooltip, Cell
+      COLOURS: lib/chartTheme.js -> SERIES, APPLICATION_STATUS, AXIS, GRID,
+               TOOLTIP
+      Uses AdminLayout, StatTile, DataTable, Card, Button.
+      Chart data still comes from data/admin.js.
+
+  SheltersPage.jsx          /admin/shelters        546 lines
+      MY BIGGEST PAGE. Every shelter, and the approval queue for new ones.
+      FULLY WIRED TO THE BACKEND.
+      CALLS: GET  /admin/shelters
+             POST /admin/shelters                 (create)
+             PUT  /admin/shelters/${id}           (edit)
+             PATCH /admin/shelters/${id}/status   (activate / suspend)
+             GET  /admin/shelters/${id}/suites    (boarding capacity)
+             GET  /admin/users
+             POST /admin/users/${id}/approve      (approve a staff signup)
+             POST /admin/users/${id}/reject
+      BUTTONS: "Add Shelter" -> AddShelterModal, "Edit", status change,
+               approve / reject staff who registered for that shelter.
+      Uses AdminLayout, StatTile, DataTable, Card, Button, Tabs,
+      AddShelterModal, SuccessModal.
+      >>> THIS IS WHERE TONNI'S STAFF ROLE BEGINS. Until I approve a shelter
+          and its staff, nobody can sign in to /staff.
+
+  UsersPage.jsx             /admin/users           572 lines
+      Every account on the platform, by role, with the staff invitation flow.
+      FULLY WIRED TO THE BACKEND.
+      CALLS: GET  /admin/users
+             POST /admin/users/invite             (send an invitation email)
+             POST /admin/users/${id}/${path}      (approve / reject / suspend)
+             PATCH /admin/users/${id}/shelter     (move staff between shelters)
+      BUTTONS: "Invite Staff" -> InviteStaffModal, row "..." menu ->
+               approve, reject (RejectStaffModal asks for a reason),
+               move shelter (MoveShelterModal).
+      Uses AdminLayout, StatTile, DataTable, Tabs, Dropdown, ActionMenu,
+      SuccessModal, InviteStaffModal, RejectStaffModal, MoveShelterModal,
+      UserDirectory, and useAuth() (so an admin cannot suspend themselves).
+      >>> "Invite Staff" SENDS THE EMAIL THAT LANDS ON FAIYAJ'S
+          /accept-invite PAGE. That is the full loop across two people's work.
+
+  QuizQuestionsPage.jsx     /admin/quiz            395 lines
+      The question bank for the adopter eligibility quiz and the boarding quiz.
+      FULLY WIRED TO THE BACKEND.
+      CALLS: GET  /admin/quiz/questions
+             GET  /admin/quiz/counts
+             POST /admin/quiz/questions           (create)
+             PUT  /admin/quiz/questions/${id}     (edit)
+             POST /admin/quiz/questions/${id}/${path}  (publish / archive)
+             DELETE /admin/quiz/questions/${id}
+      BUTTONS: "Add Quiz Question" -> AddQuestionModal, row "..." menu ->
+               edit, publish, archive, delete. Tabs by category.
+      Uses AdminLayout, StatTile, DataTable, ActionMenu, Card, Button, Tabs,
+      AddQuestionModal, SuccessModal.
+      >>> MY BEST ARCHITECTURE POINT: the quiz questions are DATA IN THE
+          DATABASE, NOT CODE. An admin changes what the quiz asks without a
+          developer editing the app or redeploying it. These exact rows are
+          what Faiyaj's EligibilityQuizModal fetches with
+          GET /quiz/ELIGIBILITY/questions.
+
+  AnalyticsPage.jsx         /admin/analytics       223 lines
+      Adoption trends, species breakdown, shelter performance.
+      Date-range dropdown, number tiles, bar and pie charts, a performance
+      table, "View All History".
+      COLOURS: lib/chartTheme.js. Reads data/admin.js -- the aggregation
+      endpoints are the next phase.
+      >>> MY SHOWPIECE PAGE. Demo this one.
+
+  ReportsPage.jsx           /admin/reports         147 lines
+      Saved reports and generating new ones.
+      BUTTON: "Generate" -> GenerateReportModal (report type, shelter, date
+      range). The modal calls GET /admin/shelters to fill its shelter list.
+      Uses AdminLayout, Card, Button, Dropdown, SuccessModal,
+      GenerateReportModal. Reads data/admin.js.
+
+--------------------------------------------------------------------------------
+2.4  MY ADMIN COMPONENTS  --  10 files, 1,611 lines
+--------------------------------------------------------------------------------
+
+  AdminLayout.jsx        23   the frame around every /admin page -- a thin
+                              wrapper around Tonni's PortalShell.
+
+  DataTable.jsx         182   ONE reusable table: columns, sorting, empty
+                              state, row actions. Built from Card.
+                              >>> USED BY 8 PAGES ACROSS THE WHOLE TEAM --
+                                  my 5 admin pages AND Tonni's Pets,
+                                  Applications and Care pages. One table
+                                  component instead of eight hand-written
+                                  tables. Say this.
+
+  StatTile.jsx           44   one number box: label, value, change indicator.
+                              Also used by Tonni's staff pages.
+
+  UserDirectory.jsx     261   the searchable, filterable user list inside
+                              UsersPage. Split into its own file because
+                              UsersPage was already 572 lines.
+                              Built from Card, Button, Tabs, Dropdown,
+                              DataTable.
+
+  AddShelterModal.jsx   217   create or edit a shelter: name, address,
+                              capacity, photo. Modal, Button, Input, Select,
+                              Textarea, FileDrop.
+
+  InviteStaffModal.jsx  171   invite a staff member by email to a chosen
+                              shelter. Calls GET /admin/shelters to fill the
+                              dropdown. "Send invitation".
+
+  RejectStaffModal.jsx   79   asks for a reason before rejecting a staff
+                              signup. Modal, Button, Textarea.
+
+  MoveShelterModal.jsx  101   move a staff member to a different shelter.
+                              Calls GET /admin/shelters. Modal, Button, Select.
+
+  AddQuestionModal.jsx  389   MY BIGGEST COMPONENT. Create or edit a quiz
+                              question: text, category, answer type, options,
+                              and which trait each option maps to.
+                              Calls GET /traits to fill the trait selector.
+                              Modal, Button, Select, Textarea, Segmented.
+
+  GenerateReportModal   144   pick report type, shelter and date range.
+                              Calls GET /admin/shelters. "Generate".
+
+  data/admin.js         117   placeholder rows for the analytics and reports
+                              screens whose endpoints are not built yet.
+
+  lib/chartTheme.js      65   SERIES, APPLICATION_STATUS, PET_STATUS, AXIS,
+                              GRID, TOOLTIP.
+                              >>> "WHY THIS FILE?" Recharts ships its own
+                                  default colours. Without this the analytics
+                                  page would look like a different product
+                                  from the rest of the app. Every chart
+                                  colour comes from the same "pw" palette as
+                                  the buttons.
+
+--------------------------------------------------------------------------------
+2.5  IF THE TEACHER SAYS "SHOW ME..."
+--------------------------------------------------------------------------------
+
+  "the services page"           /services   pages/public/ServicesPage.jsx
+  "an accordion / FAQ"          same page, components/ui/Accordion.jsx
+  "the about page"              /about      pages/public/AboutPage.jsx
+  "the 404 page"                type /banana  pages/public/NotFoundPage.jsx
+  "why 404 must be last"        src/App.jsx, the path="*" route
+  "the logo"                    components/brand/Logo.jsx
+  "the admin dashboard"         /admin      pages/admin/AdminDashboard.jsx
+  "a chart"                     /admin/analytics  pages/admin/AnalyticsPage.jsx
+  "where chart colours come
+   from"                        src/lib/chartTheme.js
+  "a reusable table"            components/admin/DataTable.jsx
+  "a page wired to the backend" pages/admin/SheltersPage.jsx (7 endpoints)
+                                pages/admin/UsersPage.jsx (4 endpoints)
+                                pages/admin/QuizQuestionsPage.jsx (5 endpoints)
+  "how staff get accounts"      /admin/users -> "Invite Staff"
+                                components/admin/InviteStaffModal.jsx
+  "the quiz question bank"      /admin/quiz  pages/admin/QuizQuestionsPage.jsx
+  "how the quiz reaches the
+   adopter"                     my rows -> GET /quiz/ELIGIBILITY/questions
+                                -> Faiyaj's EligibilityQuizModal.jsx
+  "the row action menu"         components/ui/ActionMenu.jsx (Tonni's)
+  "where the placeholder data is" src/data/admin.js
+
+--------------------------------------------------------------------------------
+2.6  WHAT I DEPEND ON, AND WHO DEPENDS ON ME
+--------------------------------------------------------------------------------
+
+I IMPORT FROM FAIYAJ:
+    api/client.js          every backend call on my four live pages
+    lib/apiError.js        readable error messages
+    context/AuthContext    UsersPage reads useAuth() so an admin cannot
+                           suspend their own account
+    components/layout/PublicLayout   my 3 public pages sit inside it
+
+I IMPORT FROM TONNI:
+    components/ui/*        Modal, Button, Input, Field, Card, Tabs, Dropdown,
+                           ActionMenu, SuccessModal, Accordion -- on every page
+    components/portal/PortalShell   AdminLayout wraps it
+
+THEY IMPORT FROM ME:
+    components/admin/DataTable   Tonni uses it on 3 staff pages
+    components/admin/StatTile    Tonni uses it on 3 staff pages
+    components/brand/Logo, PawIcon   Faiyaj's nav, footer and 8 auth pages;
+                                     Tonni's PortalShell
+    components/sections/*        Faiyaj's landing page, Tonni's Features and
+                                 Browse pages
+
+HOW MY PART COMPLETES THE PROCESS -- worth saying out loud:
+    I approve a SHELTER      -> Tonni's staff portal has somewhere to work
+    I invite a STAFF MEMBER  -> Faiyaj's /accept-invite page creates them
+    I write the QUIZ         -> Faiyaj's adopter quiz asks those questions
+    Tonni's staff decide applications -> my dashboard and analytics count them

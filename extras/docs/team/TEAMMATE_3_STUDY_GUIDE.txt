@@ -1,0 +1,492 @@
+================================================================================
+PAWHOME  --  TEAMMATE 3  --  STUDY GUIDE
+MY PART:  Admin console + public website + site chrome
+BRANCH:   feature/admin-public
+================================================================================
+
+Read PART A (shared) first. PART B is your own files.
+
+================================================================================
+PART A  --  THE SHARED STUFF  (all three of us must know this)
+================================================================================
+
+--------------------------------------------------------------------------------
+A1.  WHAT WE USED
+--------------------------------------------------------------------------------
+
+FRONTEND (the part you see in the browser)
+  React            19.2.8    builds the screens out of small reusable pieces
+  React Router     7.18.3    decides which page shows for which web address
+  Vite             8.2.2     runs the dev server, builds the final files
+  Tailwind CSS     3.4.19    styling. We write classes like "bg-pw-primary"
+                             instead of writing separate CSS files
+  Axios            1.20.0    sends requests to the backend
+  Recharts         3.10.1    draws the charts on the admin analytics page
+  react-icons      5.7.0     the icon set
+
+BACKEND (the part you do not see)
+  Spring Boot      3.4.1     the Java web server
+  Java             17
+  Maven                      downloads libraries and builds the project
+  Spring Security            login and permissions
+  JWT (jjwt)                 the login token
+  Flyway                     creates the database tables from .sql files.
+                             We also need the flyway-mysql module: Flyway 10
+                             split each database into its own module, so
+                             flyway-core alone will NOT migrate MySQL.
+
+DATABASE
+  MySQL            8.4       runs inside Docker
+  Docker Compose             starts the database with one command
+
+WHY MySQL 8.4 AND NOT OLDER:  CHECK constraints are only ENFORCED from MySQL
+8.0.16. Older servers read them and silently ignore them, which is worse than
+not having them. Our schema relies on CHECK, so the version is pinned.
+
+WHY TAILWIND 3 AND NOT 4:  version 4 changed how it is configured. Our config
+files are written for version 3. Upgrading would break the styling.
+
+
+--------------------------------------------------------------------------------
+A2.  HOW THE WHOLE THING WORKS  (the big picture)
+--------------------------------------------------------------------------------
+
+Three separate programs run at the same time. They talk over the network.
+
+    BROWSER  (React, port 5174)
+        |
+        |  sends a request  (Axios)
+        v
+    BACKEND  (Spring Boot, port 8081)
+        |
+        |  reads / writes rows
+        v
+    DATABASE (MySQL 8.4 in Docker, port 3307)
+
+The browser NEVER talks to the database directly. It always goes through the
+backend. That is on purpose: the backend is the only place that can check
+"are you allowed to do this?"
+
+PORTS: 3307 database, 8081 backend, 5174 frontend.
+3306 is the normal MySQL port, so we moved ours to 3307 to avoid clashing with
+any MySQL already installed on the laptop. The backend and frontend ports are
+shifted for the same reason.
+
+
+--------------------------------------------------------------------------------
+A3.  THE WORKFLOW  (how we run it every day)
+--------------------------------------------------------------------------------
+
+Open three terminal tabs. Database FIRST -- the backend will not start without it.
+
+    1)  cd docker      then   docker compose up -d          (database)
+    2)  cd backend     then   ./mvnw spring-boot:run        (backend)
+    3)  cd frontend    then   npm run dev                   (frontend)
+
+Then open  http://localhost:5174
+
+To check everything is talking:   http://localhost:8081/api/v1/health
+It should say  "database": "connected".
+
+GIT WORKFLOW
+    Each of us has our own branch. We never work directly on "main".
+        Teammate 1  ->  feature/adopter-auth
+        Teammate 2  ->  feature/staff-ui
+        Teammate 3  ->  feature/admin-public
+    Every day we pull "main" into our branch so conflicts stay small.
+    When a part is done we open a Pull Request on GitHub and merge into main.
+
+
+--------------------------------------------------------------------------------
+A4.  THE MAIN FILES THAT CONTROL EVERYTHING
+--------------------------------------------------------------------------------
+
+  index.html                the one HTML page. It has one empty <div id="root">
+                            and loads main.jsx. That is all it does.
+
+  src/main.jsx              the starting point. It puts React inside that div
+                            and wraps the app in BrowserRouter (the router).
+
+  src/App.jsx               THE CONTROL FILE. Every page address in the whole
+                            app is listed here. If a page is not in App.jsx,
+                            you cannot reach it.
+
+  src/index.css             loads Tailwind.
+
+  tailwind.config.js        our colour palette ("pw" colours) lives here.
+                            One change here updates the colour everywhere.
+
+  vite.config.js            sets the frontend port to 5174.
+
+  src/lib/config.js         the backend address, in ONE place.
+  src/api/client.js         the Axios setup that talks to the backend.
+
+If the teacher asks "which file controls the app?" -- the answer is
+src/App.jsx for pages, and src/main.jsx for starting it.
+
+
+--------------------------------------------------------------------------------
+A5.  HOW ROUTING WORKS  (which page shows for which address)
+--------------------------------------------------------------------------------
+
+React is a SINGLE PAGE APPLICATION. The browser only ever loads one HTML file.
+React Router looks at the address bar and swaps which component is drawn.
+The page never actually reloads, which is why it feels fast.
+
+All routes live in src/App.jsx, in four groups:
+
+  PUBLIC   (anyone)
+      /                  landing page
+      /pets              browse all pets
+      /pets/:id          one pet, signed out
+      /features  /services  /about
+
+  AUTH
+      /join              pick your role first
+      /login  /register  /forgot-password
+
+  ADMIN portal
+      /admin             dashboard
+      /admin/shelters  /admin/users  /admin/analytics
+      /admin/reports   /admin/quiz   /admin/settings
+
+  STAFF portal
+      /staff             dashboard
+      /staff/pets  /staff/applications  /staff/applications/:id
+      /staff/care  /staff/boarding      /staff/settings
+
+  ADOPTER portal
+      /app               dashboard
+      /app/pets  /app/pets/:id  /app/pets/:id/apply
+      /app/recommendations  /app/applications
+      /app/boarding  /app/boarding/:id  /app/favorites  /app/settings
+
+  ANYTHING ELSE
+      *                  404 Not Found page
+
+TWO THINGS TO REMEMBER:
+  * ":id" means a changing value. /app/pets/7 shows pet number 7.
+  * The "*" 404 route MUST stay LAST. If it moves up, every page becomes 404.
+
+WHY THE ADOPTER PORTAL IS /app AND NOT /adopter:  it is the address a logged-in
+user lives in all day, so we kept it short.
+
+
+--------------------------------------------------------------------------------
+A6.  HOW WE STOP AN ADOPTER SEEING THE ADMIN PAGES
+--------------------------------------------------------------------------------
+
+BE HONEST ABOUT THIS. The teacher will ask, and the truth is fine:
+
+  "Right now no route is guarded. The pages show placeholder data, so someone
+   typing /admin sees fake numbers, not real records. The real protection is
+   built in the next phase."
+
+THE PLAN IS TWO LAYERS. Explain both -- this is the part that scores marks.
+
+  LAYER 1 -- THE BACKEND. This is the real security.
+      Every endpoint gets a Java annotation:
+
+          @PreAuthorize("hasRole('ADMIN')")
+          public List<Shelter> listShelters() { ... }
+
+      When a request arrives, the backend reads the login token, sees the
+      user's role, and refuses with "403 Forbidden" if it does not match.
+      This cannot be bypassed from the browser.
+
+  LAYER 2 -- THE FRONTEND. This is only for a tidy experience.
+      A <ProtectedRoute> wrapper in App.jsx will hide pages the user should
+      not see, so they never click a button that fails:
+
+          <Route path="/admin" element={
+            <ProtectedRoute role="ADMIN"><AdminDashboard /></ProtectedRoute>
+          } />
+
+THE KEY SENTENCE TO SAY:
+  "The frontend guard only hides menus. Anyone can edit React in their own
+   browser. The backend check is the one that actually protects the data."
+
+Roles are stored on the user row in the database and put inside the login
+token when you sign in.
+
+
+--------------------------------------------------------------------------------
+A7.  WHAT EACH FOLDER DOES
+--------------------------------------------------------------------------------
+
+  src/pages/            one file = one full screen
+      public/               pages anyone can see
+      auth/                 login, register, role picker
+      admin/                admin portal screens
+      staff/                shelter staff screens
+      adopter/              logged-in adopter screens
+
+  src/components/       reusable pieces, used by many pages
+      ui/                   buttons, inputs, modals, cards  (the design system)
+      layout/               public nav bar, footer, page wrappers
+      admin/  staff/  adopter/   pieces used by only that one portal
+      pets/                 pet card + status badge
+      portal/               the shell around the logged-in portals
+      brand/                logo and paw icon
+      sections/             repeated marketing blocks on the public pages
+
+  src/data/             FAKE DATA. Temporary. Explained in A8.
+  src/lib/              small helpers: the backend address, error messages,
+                        chart colours
+  src/api/              client.js -- the one file that talks to the backend
+
+  backend/src/main/java/com/pawhome/backend/    the Java code
+  backend/src/main/resources/db/migration/      the .sql files that build the
+                                                database tables
+  docker/                                        starts MySQL
+
+
+--------------------------------------------------------------------------------
+A8.  HOW BUTTONS WILL CONNECT TO THE API
+--------------------------------------------------------------------------------
+
+WHERE WE ARE NOW (say this honestly):
+  27 of our 29 pages read from fake data files in src/data/.
+  Only LoginPage and RegisterPage actually call the backend.
+  The backend REST endpoints are the next phase.
+
+WHY THE FAKE DATA IS NOT LAZY -- this is the good answer:
+  The fake data is shaped EXACTLY like the database views return.
+  There is a comment at the top of src/data/pets.js that says so.
+  That means swapping to the real backend changes ONE line in each page --
+  where the data comes from -- not the twenty components that display it.
+
+HOW THE CONNECTION WORKS, IN ORDER:
+
+  1) src/lib/config.js holds the backend address in one place:
+
+         export const API_BASE =
+           import.meta.env.VITE_API_URL || "http://localhost:8081/api/v1";
+
+  2) src/api/client.js creates one Axios object using that address, and
+     automatically attaches the login token to every request:
+
+         api.interceptors.request.use((config) => {
+           const token = localStorage.getItem("token");
+           if (token) config.headers.Authorization = `Bearer ${token}`;
+           return config;
+         });
+
+     It also watches the replies. If the backend says "401 Unauthorized"
+     (token expired), it clears the token and sends the user to /login.
+
+  3) A page imports that object and uses it.
+
+     READING data when the page opens:
+
+         useEffect(() => {
+           api.get("/pets").then(({ data }) => setPets(data));
+         }, []);
+
+     SENDING data when a button is clicked:
+
+         const submit = async () => {
+           await api.post("/applications", { petId, message });
+           setDone(true);
+         };
+         ...
+         <Button onClick={submit}>Submit application</Button>
+
+  4) The backend receives it:
+
+         POST /api/v1/applications
+           -> Spring checks the token and the role
+           -> Controller receives it
+           -> Service applies the rules
+           -> Repository saves the row in MySQL
+           -> sends JSON back
+           -> React updates the screen
+
+SO THE FULL CHAIN IS:
+    button click -> api.post -> Spring Controller -> Service -> Repository
+                 -> MySQL -> back up the same path -> screen updates
+
+
+--------------------------------------------------------------------------------
+A9.  HONEST STATUS  --  say this before the teacher finds it
+--------------------------------------------------------------------------------
+
+DONE:
+  * Database design: V1__init.sql is 817 lines of real tables with proper
+    keys and constraints. V2 fills in reference data.
+  * The whole frontend: 86 files, about 9,400 lines, 29 screens.
+  * A shared design system so every page looks the same.
+  * Backend project set up and connecting to MySQL. The health check
+    at /api/v1/health proves the chain works.
+  * Login and Register already send real requests.
+
+NOT DONE YET:
+  * The REST endpoints (controllers, services, repositories in Java).
+  * Login tokens and route guards.
+  * Automated tests.
+
+NEXT STEPS, IN ORDER:
+  1. Build the auth endpoints, so login returns a real token.
+  2. Add ProtectedRoute and the role checks.
+  3. Build one feature end to end (pets), then copy that pattern.
+  4. Replace src/data/ files one page at a time.
+
+
+================================================================================
+PART B  --  MY OWN FILES  (Teammate 3)
+================================================================================
+
+I own the two ends of the product:
+  1. The public website -- the first thing a stranger sees.
+  2. The admin console -- the screens that run the whole platform.
+Plus the site chrome (nav bar, footer, logo, page frames) that makes all
+three of our areas look like one product.
+
+--------------------------------------------------------------------------------
+B1.  PUBLIC WEBSITE  --  what each page does and what its buttons do
+--------------------------------------------------------------------------------
+
+  LandingPage.jsx           /
+      The home page. Hero image, how it works, featured pets, call to action.
+      BUTTONS: "Browse Pets" -> /pets
+               "Take the Match Quiz" / "Start Your Quiz" -> the quiz flow
+               "Learn more" -> /features
+
+  AboutPage.jsx             /about
+      Who we are, the mission, the team.
+
+  FeaturesPage.jsx          /features
+      What the platform can do.  BUTTON: "Take the Quiz".
+
+  ServicesPage.jsx          /services
+      Adoption and boarding services explained.
+      BUTTON: "Request Boarding".
+
+  NotFoundPage.jsx          the "*" route
+      Shown for any address that does not exist.
+      BUTTON: "Back to home".
+      IMPORTANT: this route must stay LAST in App.jsx. If it moves above the
+      others, every page in the app becomes a 404.
+
+--------------------------------------------------------------------------------
+B2.  ADMIN CONSOLE  --  what each page does and what its buttons do
+--------------------------------------------------------------------------------
+
+  AdminDashboard.jsx        /admin
+      Platform-wide numbers: shelters, users, adoptions, pending items.
+      BUTTONS: "Add Quiz Question" -> opens AddQuestionModal
+               "Manage" -> jumps to the matching admin page
+
+  SheltersPage.jsx          /admin/shelters
+      Every shelter on the platform, in a table.
+      BUTTONS: "Add Shelter"   opens AddShelterModal
+               "Edit"          edit a shelter's details
+               approve/reject  decide a shelter's application to join
+               "Invite Staff"  opens InviteStaffModal
+
+  UsersPage.jsx             /admin/users
+      Every user account, with their role. Search and filter.
+
+  AnalyticsPage.jsx         /admin/analytics
+      The charts. Adoption trends, species breakdown, shelter performance.
+      Built with Recharts. BUTTON: "View All History".
+      Chart colours come from lib/chartTheme.js so they match the rest of
+      the app instead of using Recharts' defaults.
+
+  ReportsPage.jsx           /admin/reports
+      Saved reports.  BUTTON: "Generate" opens GenerateReportModal, where you
+      pick a report type and a date range.
+
+  QuizQuestionsPage.jsx     /admin/quiz
+      The question bank for the adopter eligibility quiz.
+      Add, edit and reorder questions.
+      WHY THIS IS IMPORTANT: the quiz questions are DATA in the database,
+      not code. An admin can change what the quiz asks without a developer
+      touching the app or redeploying it. Say this to the teacher.
+
+--------------------------------------------------------------------------------
+B3.  MY COMPONENTS
+--------------------------------------------------------------------------------
+
+  components/admin/AdminLayout.jsx     the frame around every /admin page
+  components/admin/DataTable.jsx       ONE reusable table. Shelters and Users
+                                       both use it. Handles sorting, empty
+                                       state and row actions.
+  components/admin/StatTile.jsx        one number box on the dashboard
+  components/admin/AddShelterModal.jsx     add a shelter. "Add Shelter" / "Cancel"
+  components/admin/InviteStaffModal.jsx    invite a staff member by email.
+                                           "Send invitation" / "Cancel"
+  components/admin/AddQuestionModal.jsx    add a quiz question.
+                                           "Save Question" / "Cancel"
+  components/admin/GenerateReportModal.jsx pick type + date range.
+                                           "Generate" / "Cancel"
+
+  SITE CHROME  (components/layout/)
+  PublicLayout.jsx    wraps every public page with the nav bar and footer
+  PublicNav.jsx       the top menu. BUTTONS: "Log in", "Sign up"
+                      I OWN NAVIGATION: when the other two add a page that
+                      needs a menu link, they ask me. One person owning the
+                      menu is why it stays consistent.
+  PublicFooter.jsx    the footer links
+  AuthLayout.jsx      the centred frame around login and register.
+                      TEAMMATE 1'S PAGES IMPORT THIS FROM MY FOLDER.
+  ScrollToTop.jsx     jumps to the top of the page when the address changes.
+                      Without it, clicking a link keeps your old scroll
+                      position, which feels broken.
+
+  BRAND  (components/brand/)
+  Logo.jsx, PawIcon.jsx    the logo and icon, in one place
+
+  SECTIONS  (components/sections/)
+  SectionHeading.jsx, FeatureRow.jsx, CtaBand.jsx
+      Repeated blocks on the public pages, so Landing / Features / Services
+      share the same rhythm instead of each inventing its own spacing.
+
+  data/admin.js         my fake data
+  lib/chartTheme.js     chart colours, taken from the "pw" palette
+
+--------------------------------------------------------------------------------
+B4.  QUESTIONS THE TEACHER MAY ASK ME
+--------------------------------------------------------------------------------
+
+Q: Where does the analytics data come from?
+A: data/admin.js for now. The aggregation queries are designed against the
+   real schema -- I can point at which database views they will read.
+
+Q: What stops a normal user opening /admin?
+A: Nothing on the frontend yet -- no route is guarded. The pages show fake
+   numbers, so nothing real is exposed. The real protection is
+   @PreAuthorize("hasRole('ADMIN')") on the backend endpoints. Even if
+   someone opens the admin page, every request it makes would be refused
+   with 403.
+
+Q: Why is the 404 route special?
+A: React Router picks the FIRST matching route. "*" matches everything, so
+   if it is not last, it swallows every other page.
+
+Q: Why one DataTable instead of a table on each page?
+A: Shelters and Users need the same behaviour -- sorting, empty state, row
+   actions. One component means one place to fix a bug.
+
+Q: Why are the quiz questions stored in the database?
+A: So an admin can change the eligibility criteria without a developer
+   editing code and redeploying. Behaviour that changes often should be
+   data, not code.
+
+Q: What is ScrollToTop for?
+A: In a single page app the browser does not reload, so your scroll position
+   stays where it was. Clicking a footer link would drop you halfway down
+   the next page. This resets it on every address change.
+
+Q: Why does chartTheme.js exist?
+A: Recharts has its own default colours. Without this file the analytics
+   page would look like a different product from the rest of the app.
+
+Q: How would you connect the shelters table to the backend?
+A: Replace the data/admin.js import with:
+       useEffect(() => { api.get("/shelters").then(r => setRows(r.data)); }, []);
+   and point "Add Shelter" at api.post("/shelters", form).
+
+Q: What is left to do in your part?
+A: The admin endpoints in Java, the real aggregation queries behind the
+   charts, and role guards on the /admin routes.

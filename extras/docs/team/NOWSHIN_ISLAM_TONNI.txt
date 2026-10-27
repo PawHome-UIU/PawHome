@@ -1,0 +1,546 @@
+================================================================================
+PAWHOME  --  NOWSHIN ISLAM TONNI
+MY PART:  Features page  ·  Browse Pets  ·  the whole Shelter (staff) role
+          plus the shared UI component library
+BRANCH:   feature/shelter-ui
+SIZE:     34 files, 4,535 lines   (team average 4,442)
+================================================================================
+
+================================================================================
+PART 1  --  THE SHARED FOUNDATION
+Every teammate must be able to explain this part. It is identical in all
+three documents.
+================================================================================
+
+--------------------------------------------------------------------------------
+1.1  WHY WE CHOSE REACT
+--------------------------------------------------------------------------------
+
+Five real reasons, not "it is popular":
+
+1. REUSE.  We have 29 screens. Without React we would write the same button,
+   the same input box and the same pop-up dialog on every one of them. In
+   React we wrote Button.jsx ONCE and imported it 29 times. Change the button
+   style in one file and every screen updates.
+
+2. THE SCREEN FOLLOWS THE DATA.  In plain HTML+JavaScript you have to find
+   the element and change it by hand every time something happens. In React
+   you change the DATA and React redraws whatever depended on it. Fewer bugs,
+   because there is no way for the screen and the data to disagree.
+
+3. SINGLE PAGE APPLICATION.  The browser loads one HTML file once. After that
+   React swaps the content when the address changes. No white flash, no full
+   reload -- it feels like a phone app rather than a website.
+
+4. READY-MADE ECOSYSTEM.  Routing, charts, icons and HTTP all have mature
+   React libraries. We did not have to build any of them.
+
+5. IT LETS THREE PEOPLE WORK AT ONCE.  A React component is just a file. We
+   split the project so each person owns whole folders nobody else edits,
+   which is why we get almost no merge conflicts.
+
+--------------------------------------------------------------------------------
+1.2  HOW REACT ACTUALLY WORKS  (the five ideas)
+--------------------------------------------------------------------------------
+
+COMPONENT   A JavaScript function that returns JSX (HTML-looking code).
+            Its name starts with a capital letter.
+                function PetCard() { return <div>Cooper</div>; }
+
+JSX         HTML written inside JavaScript. Vite converts it to real
+            JavaScript before the browser sees it.
+
+PROPS       Data passed INTO a component from its parent. Read-only.
+                <PetCard name="Cooper" age="3 months" />
+
+STATE       Data that CHANGES inside a component. Declared with useState.
+            When you call the setter, React redraws that component.
+                const [open, setOpen] = useState(false);
+                setOpen(true);        // -> React redraws
+
+EFFECT      Code that runs AFTER the screen is drawn -- used for fetching
+            data. Declared with useEffect.
+                useEffect(() => { api.get("/pets").then(...) }, []);
+            The empty [] means "run once when the page opens".
+
+WHY IT IS FAST:  React keeps a lightweight copy of the page in memory (the
+"virtual DOM"). When data changes it compares old and new, and updates only
+the parts that actually differ instead of redrawing everything.
+
+OTHER HOOKS WE USE:
+  useMemo         remember a calculated value so filtering does not re-run on
+                  every keystroke
+  useParams       read the changing part of an address, e.g. the 7 in /pets/7
+  useNavigate     move to another page from code, e.g. after a form is saved
+  useLocation     read the current address
+  useContext      read shared data from anywhere without passing props down
+                  through every level -- this is how AuthContext works
+
+--------------------------------------------------------------------------------
+1.3  THE ARCHITECTURE  --  how each section provides everything
+--------------------------------------------------------------------------------
+
+Three programs run at the same time and talk over the network:
+
+    BROWSER  (React + Vite, port 5174)
+        |  Axios request, carrying the login token
+        v
+    BACKEND  (Spring Boot, port 8081)
+        |  JDBC
+        v
+    DATABASE (MySQL 8.4 in Docker, port 3307)
+
+The browser NEVER touches the database directly. Everything goes through the
+backend, because the backend is the only place that can be trusted to check
+"are you allowed to do this?"
+
+INSIDE THE FRONTEND there are four layers. Each provides something different:
+
+  PAGES         src/pages/...
+                One file = one full screen. A page knows WHAT to show and WHEN
+                to fetch. It holds the state and the handlers.
+
+  COMPONENTS    src/components/...
+                Reusable pieces. A component knows HOW something looks. It
+                takes props and gives back JSX. It does not fetch data.
+                  ui/         buttons, inputs, modals -- used by everyone
+                  layout/     public nav bar, footer, page frames
+                  portal/     the sidebar shell for logged-in areas
+                  admin/ staff/ adopter/   pieces used by only that portal
+                  pets/ brand/ sections/   shared small pieces
+
+  DATA + API    src/api/client.js   the one place that talks to the backend
+                src/lib/            small helpers (address, error text, rules)
+                src/data/           placeholder data for screens whose
+                                    endpoints are not built yet
+
+  SHELL         index.html -> src/main.jsx -> src/App.jsx
+                main.jsx starts React and wraps everything in BrowserRouter
+                and AuthProvider. App.jsx lists every route.
+
+THE RULE WE FOLLOW: pages fetch, components display. A component that fetches
+its own data cannot be reused anywhere else.
+
+--------------------------------------------------------------------------------
+1.4  LIBRARIES AND DEPENDENCIES  (exact versions, from package-lock.json)
+--------------------------------------------------------------------------------
+
+FRONTEND -- runtime
+  react              19.2.8    builds the screens out of components
+  react-dom          19.2.8    puts React components into the browser page
+  react-router-dom   7.18.3    decides which page shows for which address
+  axios              1.20.0    sends HTTP requests to the backend
+  recharts           3.10.1    draws the charts on the admin pages
+  react-icons        5.7.0     the icon set
+
+FRONTEND -- build tools (not shipped to the user)
+  vite               8.2.2     dev server + production build
+  @vitejs/plugin-react         lets Vite understand JSX
+  tailwindcss        3.4.19    styling with utility classes
+  postcss + autoprefixer       runs Tailwind and adds browser prefixes
+  eslint (+ plugins)           catches mistakes before they run
+
+  WHY TAILWIND 3 AND NOT 4:  version 4 changed how it is configured. Our
+  tailwind.config.js and postcss.config.js are written for version 3.
+  Upgrading would break every style in the project.
+
+BACKEND
+  Spring Boot 3.4.1, Java 17, Maven
+  spring-boot-starter-web            REST endpoints
+  spring-boot-starter-data-jpa       Hibernate, database access
+  spring-boot-starter-validation     @Valid on incoming data
+  spring-boot-starter-security       login and permissions
+  spring-boot-starter-mail           verification and invite emails
+  jjwt 0.12.5                        creates and reads the login token
+  mysql-connector-j                  the MySQL driver
+  flyway-core + flyway-mysql         builds the tables from .sql files
+                                     (flyway-core ALONE will not do MySQL --
+                                      Flyway 10 split each database into its
+                                      own module)
+  lombok, mapstruct                  less boilerplate in Java classes
+
+DATABASE
+  MySQL 8.4 (InnoDB, utf8mb4) in Docker.
+  Version pinned on purpose: CHECK constraints are only ENFORCED from MySQL
+  8.0.16. Older servers read them and silently ignore them, which is worse
+  than not having them.
+
+PORTS
+  3307  MySQL      (3306 is any MySQL already on the laptop)
+  8081  backend
+  5174  frontend dev server
+  4174  frontend production preview
+
+--------------------------------------------------------------------------------
+1.5  ROUTING  --  which page shows for which address
+--------------------------------------------------------------------------------
+
+THE CONTROL FILE IS  src/App.jsx.  Every address in the whole application is
+listed there. If a page is not in App.jsx, you cannot reach it.
+
+  index.html          one empty <div id="root">, loads main.jsx
+  src/main.jsx        starts React; wraps the app in
+                        <BrowserRouter>   -- the router
+                          <AuthProvider>  -- who is signed in
+                            <App />
+  src/App.jsx         the route table
+
+THE FIVE ROUTE GROUPS:
+
+  PUBLIC   /  /pets  /pets/:id  /features  /services  /about
+  AUTH     /join  /login  /register  /forgot-password
+           /check-email  /verify-email  /reset-password  /accept-invite
+  ADMIN    /admin  /admin/shelters  /admin/users  /admin/analytics
+           /admin/reports  /admin/quiz  /admin/settings
+  STAFF    /staff  /staff/pets  /staff/applications  /staff/applications/:id
+           /staff/care  /staff/boarding  /staff/settings
+  ADOPTER  /app  /app/pets  /app/pets/:id  /app/pets/:id/apply
+           /app/recommendations  /app/applications  /app/boarding
+           /app/boarding/:id  /app/favorites  /app/settings
+  404      *
+
+TWO THINGS TO REMEMBER:
+  * ":id" is a changing value. /app/pets/7 shows pet 7; the page reads it
+    with useParams().
+  * The "*" 404 route MUST STAY LAST. React Router picks the FIRST match and
+    "*" matches everything -- if it moves up, every page becomes a 404.
+
+--------------------------------------------------------------------------------
+1.6  HOW WE STOP AN ADOPTER SEEING THE ADMIN PAGES
+--------------------------------------------------------------------------------
+
+TWO LAYERS. Explain both -- the second one is where the marks are.
+
+LAYER 1 -- THE BROWSER (navigation only, NOT security)
+  src/context/AuthContext.jsx   holds who is signed in
+  src/components/auth/ProtectedRoute.jsx   wraps whole route groups
+
+  In App.jsx:
+      <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
+        ...all the /admin routes...
+      </Route>
+
+  Three outcomes:
+      not signed in   -> sent to /login, remembering where they were going
+      wrong role      -> sent to their own portal (not an error page -- they
+                         are not doing anything wrong, just in the wrong place)
+      right role      -> the page renders
+
+  While the app is still asking the server who you are, ProtectedRoute shows
+  a spinner. Without that, refreshing on /admin would flash the login page.
+
+LAYER 2 -- THE SERVER (this is the real security)
+  backend .../security/SecurityConfig.java   which endpoints need a login
+  backend .../security/ScopeGuard.java       which rows you may touch
+  backend .../security/JwtAuthFilter.java    reads the token on every request
+
+  Every request carries the token. The backend reloads the real user row and
+  decides. A staff member from Shelter A cannot read Shelter B's pets even by
+  changing the URL, because ScopeGuard checks the shelter on the row.
+
+THE SENTENCE TO SAY:
+  "ProtectedRoute is convenience, not security. Anyone can edit localStorage
+   in devtools and write {"role":"ADMIN"} -- and they would get an empty
+   admin portal and a wall of 403s, because every request still carries their
+   real token and the server reloads their real row."
+
+  That is written in the comment at the top of ProtectedRoute.jsx and
+  AuthContext.jsx. It is worth quoting.
+
+  AuthContext also proves it: on boot it calls GET /auth/me with whatever
+  token is stored and BELIEVES THE SERVER, not localStorage.
+
+--------------------------------------------------------------------------------
+1.7  HOW A BUTTON REACHES THE DATABASE
+--------------------------------------------------------------------------------
+
+  src/lib/config.js       the backend address, in ONE place
+        export const API_BASE =
+          import.meta.env.VITE_API_URL || "http://localhost:8081/api/v1";
+
+  src/api/client.js       one Axios object built on that address. It
+                          automatically attaches the login token to every
+                          request, and on a 401 (token expired) it clears the
+                          token and sends the user to /login.
+
+  A page then does:
+
+      // reading when the page opens
+      useEffect(() => {
+        api.get("/pets").then(({ data }) => setPets(data));
+      }, []);
+
+      // writing when a button is clicked
+      const submit = async () => {
+        await api.post("/applications", { petId, message });
+        setDone(true);
+      };
+      <Button onClick={submit}>Submit application</Button>
+
+  THE FULL CHAIN:
+      click -> api.post -> JwtAuthFilter checks the token
+            -> SecurityConfig checks the role
+            -> Controller -> Service (the rules) -> Repository
+            -> MySQL -> JSON back -> setState -> screen redraws
+
+  WHERE WE ARE: auth, pets, applications, quiz, shelters and admin users are
+  wired to the real backend. Boarding, care records, reports and analytics
+  still read placeholder files in src/data/ -- those endpoints are the next
+  phase. The placeholder data is shaped like the database views, so switching
+  each page over is a one-line change, not a rewrite.
+
+
+================================================================================
+PART 2  --  MY FILES  (Nowshin Islam Tonni)
+================================================================================
+
+I own three things:
+  1. The PUBLIC PET DISCOVERY pages -- Features, Browse Pets, guest pet profile.
+  2. The whole SHELTER STAFF role -- intake, applications, boarding, care.
+  3. The SHARED UI LIBRARY -- the buttons, inputs and modals that BOTH other
+     teammates import on every single page.
+
+That third one makes me the most depended-on person on the team.
+
+--------------------------------------------------------------------------------
+2.1  THE UI LIBRARY  --  my most important work
+--------------------------------------------------------------------------------
+
+src/components/ui/  --  11 files, 845 lines, used by all 29 screens.
+
+  Button.jsx           67   Every button in the project. Variants (primary,
+                            outline, danger) and sizes.
+  Input.jsx            73   Text boxes, with error state.
+  Field.jsx           203   The biggest one. EXPORTS FIVE CONTROLS:
+                              Select      dropdown inside a form
+                              Textarea    multi-line text
+                              Segmented   a row of pick-one buttons
+                              ChipGroup   pick-many tags (used for pet traits)
+                              FileDrop    drag-and-drop photo upload
+                            Everything that is not a plain text box lives here.
+  Checkbox.jsx         16   Tick boxes.
+  Dropdown.jsx        148   Standalone select menu. useEffect closes it when
+                            you click away.
+  ActionMenu.jsx      116   The "..." row menu on tables. Used by my Pets page
+                            and by Mukararam's Users and Quiz pages.
+  Card.jsx             20   The white rounded box used everywhere.
+  Modal.jsx            55   The pop-up frame: dark backdrop, centred panel,
+                            closes on the Escape key (that is the useEffect
+                            inside it).
+                            >>> EVERY POP-UP IN THE PROJECT IS BUILT ON THIS
+                                ONE FILE -- mine, Faiyaj's quiz modals, and
+                                all of Mukararam's admin modals.
+  SuccessModal.jsx     81   The green "that worked" confirmation. Built from
+                            Button.
+  Tabs.jsx             31   Tab switching inside a page.
+  Accordion.jsx        35   Expand / collapse. Used on the Services FAQ.
+
+WHAT TO SAY:
+  "Nobody on our team hand-writes a button. Every input, modal and card on all
+   29 screens comes from these 11 files. Change the button style once and it
+   changes everywhere."
+
+MY RULES AS THE OWNER:
+  * No raw colour codes in these files -- everything uses the "pw" palette in
+    tailwind.config.js, so one palette change updates the whole app.
+  * I ADD props, I never RENAME them. Renaming would silently break every page
+    the other two wrote.
+  * If someone needs a new variant, I add it here. They never copy Button.jsx
+    into their own folder.
+  * I had to build Button, Input and Modal FIRST, before my own pages, because
+    the other two were blocked until they existed.
+
+src/components/portal/  --  2 files, 201 lines
+
+  PortalShell.jsx     179   THE SHARED FRAME FOR ALL THREE LOGGED-IN PORTALS:
+                            sidebar, top bar, content area, sign-out.
+                            Reads useAuth() to show who is signed in.
+                            AdminLayout, StaffLayout and AdopterLayout are each
+                            about 22 lines that pass this different menus.
+                            >>> "WHY DO ALL THREE PORTALS LOOK THE SAME?" --
+                                this file. One shell, three menus.
+  PanelCard.jsx        22   A titled panel used inside those portals.
+
+--------------------------------------------------------------------------------
+2.2  PUBLIC PET DISCOVERY  --  3 pages
+--------------------------------------------------------------------------------
+
+  FeaturesPage.jsx          /features            144 lines
+      What the platform can do: feature rows with icons, a closing call
+      to action, "Take the Quiz" button.
+      Uses PublicLayout, SectionHeading, FeatureRow, CtaBand (Mukararam's),
+      Card, Button.
+
+  BrowsePetsPage.jsx        /pets                140 lines
+      The pet catalogue anyone can see without signing in.
+      CONTROLS: search box (name or breed), filter dropdowns, a grid of
+      PetCards, pagination.
+      useMemo does the filtering so it does not re-run on every keystroke.
+      Uses PublicLayout, PetCard, Dropdown, CtaBand. Reads data/pets.js.
+      >>> "SHOW ME SEARCH OR FILTERING" -- the useMemo block in this file.
+
+  GuestPetDetailPage.jsx    /pets/:id            140 lines
+      One pet's profile for a signed-out visitor.
+      useParams reads the id out of the address. To apply you must sign in --
+      that is the gate.
+      Uses PublicLayout, Card, Button, StatusBadge. Reads data/pets.js.
+
+src/components/pets/  --  2 files, 82 lines
+
+  PetCard.jsx          68   One pet in a grid: photo, name, breed, age, status.
+                            Built from Card + Button + StatusBadge.
+                            USED BY: my Browse page AND Faiyaj's landing page.
+  StatusBadge.jsx      14   The small coloured label: Available / Pending /
+                            Adopted. The smallest file in the project and one
+                            of the most used -- my pets page, the guest
+                            profile, Faiyaj's adopter pages, my application
+                            review page.
+
+  data/pets.js         30   placeholder pet rows, shaped like the database view.
+
+--------------------------------------------------------------------------------
+2.3  THE SHELTER (STAFF) ROLE  --  6 pages
+--------------------------------------------------------------------------------
+
+  StaffDashboard.jsx          /staff                  164 lines
+      Shelter home screen: number tiles, today's care tasks, recent
+      applications.
+      BUTTONS: "Review Applications", "View Activity History",
+               "See Success Stories"
+      Uses StaffLayout, PanelCard, StatTile (Mukararam's), Button.
+      ALSO EXPORTS TaskTypePill, which my CareHealthPage imports -- a small
+      shared piece without needing a new file.
+
+  PetsManagementPage.jsx      /staff/pets             425 lines
+      MY BIGGEST PAGE. The shelter's pet list -- where a rescue is entered.
+      FULLY WIRED TO THE BACKEND.
+      CALLS: GET /staff/pets, POST /staff/pets, PUT /staff/pets/${id},
+             DELETE /staff/pets/${id}, PATCH /staff/pets/${id}/status,
+             POST /staff/pets/${id}/photos?cover=...
+      BUTTONS: "Add Pet" (opens AddPetModal), row "..." menu -> Edit, change
+      status, Delete (opens DeletePetModal).
+      Uses StaffLayout, StatusBadge, DataTable (Mukararam's), ActionMenu,
+      Card, Button, Dropdown, AddPetModal, DeletePetModal, SuccessModal.
+      >>> ONE MODAL DOES ADD AND EDIT. It changes its title and its save
+          button text. Two modals would be the same code written twice.
+
+  ApplicationsPage.jsx        /staff/applications     227 lines
+      Every adoption application waiting for a decision.
+      CALLS: GET /staff/applications, GET /staff/applications/counts
+      Tabs by status, a table, clicking a row opens the review page.
+      Uses StaffLayout, StatTile, DataTable, Card, Button, Tabs.
+
+  ApplicationReviewPage.jsx   /staff/applications/:id 298 lines
+      One application in full, with the adopter's answers and quiz result.
+      CALLS: GET /staff/applications/${id},
+             POST /staff/applications/${id}/${path}   (approve / decline)
+      BUTTONS: "Approve" -> success modal -> back to the list
+               "Decline" -> DeclineApplicationModal, which ASKS FOR A REASON
+      >>> WHY DECLINE ASKS FOR A REASON AND APPROVE DOES NOT: declining is
+          the decision the adopter will question, so we record why.
+      >>> THIS IS THE OTHER END OF FAIYAJ'S APPLICATION FORM. He submits it
+          from /app/pets/:id/apply; I decide it here.
+
+  CareHealthPage.jsx          /staff/care             206 lines
+      Care tasks, treatment logs, vaccinations. Tabs for each.
+      BUTTONS: "Save Log", "Cancel", Add Vaccination -> AddVaccinationModal.
+      Uses StaffLayout, PanelCard, DataTable, Card, Button, Input, Modal,
+      Tabs, TaskTypePill (from StaffDashboard), AddVaccinationModal,
+      SuccessModal. Reads data/staff.js -- endpoint not built yet.
+
+  BoardingPage.jsx            /staff/boarding         187 lines
+      Boarding requests and current stays.
+      BUTTONS: "Accept", "Accept & Assign" (approve AND give a suite in one
+      click), "Decline" -> DeclineBoardingModal, "Post update" ->
+      PostBoardingUpdateModal.
+      Reads data/staff.js -- endpoint not built yet.
+
+MY STAFF MODALS  (components/staff/ -- 7 files, 1,075 lines)
+
+  AddPetModal.jsx           358   add or edit a pet: name, species, breed,
+                                  age, size, sex, traits, photos.
+                                  CALLS GET /traits for the trait chips.
+                                  Built from Modal, Button, Input, Select,
+                                  Textarea, Segmented, ChipGroup, FileDrop.
+  AddVaccinationModal.jsx   190   record a vaccination. "Save Vaccination".
+  DeclineApplicationModal   141   asks for a reason before declining an
+                                  adoption application.
+  DeclineBoardingModal.jsx  123   the same, for a boarding request.
+  DeletePetModal.jsx         93   confirm before deleting a pet. Destructive
+                                  actions always confirm first.
+  PostBoardingUpdateModal   148   send the owner a photo and a note about
+                                  their pet's stay.
+  StaffLayout.jsx            22   the frame around every /staff page -- a thin
+                                  wrapper around PortalShell.
+
+  data/staff.js             122   placeholder rows for boarding and care.
+
+--------------------------------------------------------------------------------
+2.4  SETTINGS  --  one page, three portals
+--------------------------------------------------------------------------------
+
+  SettingsPage.jsx      /staff/settings AND /admin/settings AND /app/settings
+                        249 lines
+      Tabs: Profile, Password, Notifications.
+      BUTTONS: "Save changes", "Update password".
+      It imports ALL THREE layouts (AdminLayout, StaffLayout, AdopterLayout)
+      and uses useLocation() to see whether the address starts with /admin,
+      /staff or /app, then wraps itself in the matching one.
+      Uses passwordError() and PasswordChecklist (Faiyaj's) for the password
+      tab, so the rules match the sign-up form exactly.
+      >>> "WHY ONE FILE FOR THREE PORTALS?" -- the content is identical for
+          everyone; only the sidebar differs. Three copies would mean fixing
+          every bug three times.
+
+--------------------------------------------------------------------------------
+2.5  IF THE TEACHER SAYS "SHOW ME..."
+--------------------------------------------------------------------------------
+
+  "the button component"        components/ui/Button.jsx
+  "the modal component"         components/ui/Modal.jsx
+  "how a modal closes on Esc"   the useEffect inside Modal.jsx
+  "form controls"               components/ui/Field.jsx (5 exports)
+  "the row action menu"         components/ui/ActionMenu.jsx
+  "the sidebar"                 components/portal/PortalShell.jsx
+  "browse pets"                 /pets      pages/public/BrowsePetsPage.jsx
+  "search / filtering"          the useMemo block in that file
+  "the pet card"                components/pets/PetCard.jsx
+  "the staff dashboard"         /staff     pages/staff/StaffDashboard.jsx
+  "adding a pet"                /staff/pets -> "Add Pet"
+                                components/staff/AddPetModal.jsx
+  "add and edit in one modal"   the `editing` check in that file
+  "a page wired to the backend" pages/staff/PetsManagementPage.jsx (6 endpoints)
+  "reviewing an application"    /staff/applications/1
+                                pages/staff/ApplicationReviewPage.jsx
+  "confirming a destructive
+   action"                      components/staff/DeletePetModal.jsx
+  "one page, three portals"     pages/SettingsPage.jsx, the useLocation line
+  "where the placeholder data is" src/data/staff.js, src/data/pets.js
+
+--------------------------------------------------------------------------------
+2.6  WHAT I DEPEND ON, AND WHO DEPENDS ON ME
+--------------------------------------------------------------------------------
+
+I IMPORT FROM FAIYAJ:
+    api/client.js          every backend call I make
+    lib/apiError.js        readable error messages
+    lib/config.js          API_BASE, for building photo URLs
+    context/AuthContext    PortalShell reads useAuth()
+    components/layout/PublicLayout   my 3 public pages sit inside it
+    components/auth/PasswordChecklist   used on the Settings password tab
+
+I IMPORT FROM MUKARARAM:
+    components/admin/DataTable   my Pets, Applications and Care pages all use
+                                 his table instead of writing three new ones
+    components/admin/StatTile    my dashboard and 2 other pages
+    components/sections/CtaBand  Features and Browse pages
+    components/sections/SectionHeading, FeatureRow   Features page
+    components/brand/Logo        inside PortalShell
+
+EVERYONE DEPENDS ON ME FOR:
+    components/ui/*        all 11 files, on every screen in the project
+    components/portal/PortalShell   all three portals are built on it
+    components/pets/PetCard, StatusBadge
+
+BECAUSE OF THAT: if I rename a prop in Button.jsx, two other people's pages
+break at once. I announce any change to the group before making it.
